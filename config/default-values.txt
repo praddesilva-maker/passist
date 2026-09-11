@@ -1,0 +1,10 @@
+# Default configuration values for Personal Assist API
+# This file should be read by lib/default_values.py
+
+# Account identifiers
+account_id=default_account
+parent_id=default_parent
+collection_id=default_collection
+
+# Resource identifiers
+thing_type_id=default_thing_type

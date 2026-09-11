@@ -1,0 +1,9 @@
+{
+  "skill_category_map": {
+    "skill_template": "skill"
+  },
+  "receipt_exemptions": {
+    "usage-metrics-report": "This skill runs the aggregator and is exempt from emitting receipts as it's the reporting tool itself.",
+    "use-capability": "Delegates to target capabilities; receipt emitted by invoked skill"
+  }
+}
