@@ -1,0 +1,1 @@
+"""Spreadsheet template generator skill."""
