@@ -8,6 +8,8 @@ This is the canonical list of tools available in the passist framework.
 | updateThing  | Update a thing in Personal Assist API by ID | Yes         |
 | useCapability| Route user's stated goal to the right existing tool or skill and run it | No          |
 | researchAI   | Perform intelligent research on topics with APA citations in multiple formats | Yes         |
+| readLocalFile| Read a local .md/.txt/.docx/.pdf and return extracted text + basic metadata | No          |
+| umcc         | Universal Meta-Cognitive Critic - mandatory QA layer for validating all skill outputs | No          |
 
 ## Tool Details
 
@@ -41,10 +43,35 @@ Perform intelligent research on topics with APA citations in multiple formats
 
 **Side Effect:** Yes - creates files with research results and APA citations
 
-## Output Format
-The researchAI tool generates documents with proper APA formatting:
-- Academic: Peer-reviewed sources, scholarly articles
-- Professional: Industry reports, expert opinions  
-- General: News sources, public information
+## readLocalFile
+Read a local .md/.txt/.docx/.pdf and return extracted text + basic metadata
 
-**Note:** This tool will be fully functional when implemented with appropriate libraries (docx, pptx, openpyxl) for document generation.
+**Arguments:**
+- `path` (string): The path to the local file to read
+
+**Side Effect:** No - this is a read-only operation
+
+## umcc
+Universal Meta-Cognitive Critic - mandatory QA layer for validating all skill outputs
+
+**Arguments:**
+- `task` (string): The original user task that was executed 
+- `output` (object): The output from the skill/tool to be validated
+- `sources` (array of strings, optional): Source references used in the output
+- `context` (object, optional): Additional context about execution
+
+**Side Effect:** No - this is a read-only validation tool
+
+## Output Format
+The umcc tool returns:
+- `status` (string): "passed", "failed" or "ambiguous"
+- `feedback` (string): Human-readable feedback about validation results  
+- `correction_manifest` (string, optional): Manifest for corrections when output fails
+- `needs_clarification` (boolean): Whether clarification is needed from user
+
+This tool verifies all outputs through triple-pass verification:
+1. Intent & Ambiguity Alignment
+2. Factuality & Provenance (Truth Pass)
+3. Structural & Constraint Integrity
+
+The tool can trigger a recursive correction loop when issues are found.

@@ -40,9 +40,56 @@ def run_tool(tool_name: str, args: Dict[str, Any], confirm: bool = False) -> Dic
     # Execute the tool function
     try:
         result = tool_spec.run(validated_args)
+        
+        # Automatically run UMCC validation on the output (except for UMCC itself)
+        if tool_name != "umcc":
+            umcc_result = validate_with_umcc(tool_name, args, result)
+            if umcc_result.get("status") == "failed":
+                # Return error with correction manifest if validation fails
+                return {
+                    "ok": False, 
+                    "error": f"Validation failed: {umcc_result.get('feedback')}",
+                    "correction_manifest": umcc_result.get("correction_manifest")
+                }
+            elif umcc_result.get("status") == "ambiguous":
+                # Return error indicating ambiguity needs clarification
+                return {
+                    "ok": False, 
+                    "error": f"Ambiguous task requiring clarification: {umcc_result.get('feedback')}"
+                }
+        
         return {"ok": True, "result": result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+def validate_with_umcc(tool_name: str, args: Dict[str, Any], output: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run UMCC validation on tool output.
+    
+    Args:
+        tool_name: Name of the tool that generated the output
+        args: Input arguments to the tool  
+        output: Output from tool execution
+        
+    Returns:
+        Dictionary with UMCC validation results
+    """
+    try:
+        # Import UMCC tool here to avoid circular imports
+        from .tools.umcc import run_umcc, UmccArgs
+        
+        # Prepare arguments for UMCC tool
+        umcc_args = UmccArgs(
+            task=f"Output validation of {tool_name} execution",
+            output=output,
+            sources=args.get("sources", []),
+            context={"tool": tool_name}
+        )
+        
+        # Run UMCC validation
+        return run_umcc(umcc_args)
+    except Exception as e:
+        return {"status": "failed", "feedback": f"UMCC validation failed with error: {str(e)}"}
 
 def main():
     """Main entry point for CLI operation"""
