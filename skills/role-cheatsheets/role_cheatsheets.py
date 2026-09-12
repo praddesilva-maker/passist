@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+from pathlib import Path
+
+# Ensure temp directory exists
+temp_dir = Path("/home/praddesilva/ProjectTeams/personal-assistant/temp")
+temp_dir.mkdir(exist_ok=True)
+
 def generate_role_sheet(role: str, skills: list, prompts: list):
     """Generate an individual sheet for a role"""
     print(f"Generating sheet for role: {role}")
@@ -36,10 +46,12 @@ def generate_role_sheet(role: str, skills: list, prompts: list):
         content += "**Guardrail**: [Any specific guidelines or restrictions]\n\n"
         content += f"[Full template](https://github.com/example/passist/blob/main/docs/prompts.md#{job['skill']})\n"
     
-    with open(f"cheat-sheets/{role.lower().replace(' ', '-')}.md", "w", encoding="utf-8") as f:
+    # Instead of writing to cheat-sheets directory, write to temp
+    output_file = temp_dir / f"{role.lower().replace(' ', '-')}.md"
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
         
-    print(f"Role sheet for {role} generated")
+    print(f"Role sheet for {role} generated in {output_file}")
 
 def generate_backlog(skills: list, prompts: list):
     """Generate a value-ranked backlog of new capabilities to build"""
@@ -80,10 +92,12 @@ def generate_backlog(skills: list, prompts: list):
     
     content += "\n> **Note**: This backlog is dynamic and will be refreshed whenever a skill is added or removed from the system.\n"
     
-    with open("cheat-sheets/new-build-backlog.md", "w", encoding="utf-8") as f:
+    # Instead of writing to cheat-sheets directory, write to temp
+    output_file = temp_dir / "new-build-backlog.md"
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
         
-    print("Backlog generated")
+    print(f"Backlog generated in {output_file}")
 
 def main():
     """Main CLI entry point"""

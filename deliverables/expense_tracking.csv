@@ -1,0 +1,6 @@
+Date,Category,Description,Amount ($),Payment Method,Budgeted Amount ($),Actual vs Budget,Notes
+2023-01-01,Housing,Rent,1200.00,Check,1200.00,0.00,
+2023-01-02,Food,Groceries,150.00,Credit Card,200.00,-50.00,Monthly groceries
+2023-01-03,Transportation,Gas,45.00,Debit Card,50.00,-5.00,
+2023-01-04,Entertainment,Movies,35.00,Credit Card,40.00,-5.00,
+2023-01-05,Healthcare,Medication,75.00,Credit Card,80.00,-5.00,

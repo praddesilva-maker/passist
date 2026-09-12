@@ -34,6 +34,7 @@ The source of truth for all available tools is:
 4. **No hard-coded config defaults** - All non-secret IDs/config should come from `config/default-values.txt`
 5. **Dry-run default** - All write operations default to dry-run unless explicitly confirmed
 6. **Confirm destructive writes** - Any state-changing operation requires explicit `--confirm` flag
+7. **Temporary file handling** - All temporary working files created by skills must be written to the `/home/praddesilva/ProjectTeams/personal-assistant/temp` directory
 
 ### Documentation Policy
 Every change to tools or skills must update:
