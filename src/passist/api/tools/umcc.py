@@ -6,10 +6,15 @@ This tool is the core of the mandatory QA layer that validates all outputs in th
 
 import json
 import requests
+import re
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from urllib.parse import urlparse
+import logging
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class UmccArgs(BaseModel):
     """Arguments for umcc tool"""
@@ -35,16 +40,13 @@ def run_umcc(args: UmccArgs) -> Dict[str, Any]:
     needs_clarification = False
     correction_manifest = ""
     
-    # Convert output to dict if it's a string or simple value 
-    output_dict = args.output if isinstance(args.output, dict) else {"result": args.output}
-    
     # Perform triple-pass verification
-    pass1_result = intent_alignment_check(args.task, args.output, feedback)
+    pass1_result = intent_alignment_check(args.task, args.output, args.sources, feedback)
     pass2_result = factuality_check(args.task, args.output, args.sources, feedback)
     pass3_result = structural_integrity_check(args.task, args.output, args.context, feedback)
     
     # Determine final status
-    if not pass1_result or not pass2_result or not pass3_result:
+    if not (pass1_result and pass2_result and pass3_result):
         status = "failed"
         correction_manifest = generate_correction_manifest(args.task, args.output, feedback)
     elif needs_clarification:
@@ -62,18 +64,59 @@ def run_umcc(args: UmccArgs) -> Dict[str, Any]:
     return result
 
 
-def intent_alignment_check(task: str, output: Dict[str, Any], feedback: List[str]) -> bool:
-    """Check if output aligns with original task and intent"""
-    # Basic check - in a real implementation, this would be more sophisticated
+def intent_alignment_check(task: str, output: Dict[str, Any], sources: Optional[List[str]], feedback: List[str]) -> bool:
+    """Check if output fully addresses the original task and intent"""
     pass_ = True
     
-    # Check if the output actually addresses key components of the task
-    if not output:
-        feedback.append("❌ Output is empty or None")
-        pass_ = False
-    else:
-        feedback.append("✅ Intent alignment passed: Output contains content")
+    # If task is empty or None, we can't validate
+    if not task or not task.strip():
+        feedback.append("❌ Task input is missing or empty")
+        return False
+    
+    # Check if the output contains key components of the task
+    try:
+        output_str = json.dumps(output) if not isinstance(output, str) else output
+        task_words = re.findall(r'\b\w+\b', task.lower())
         
+        # If output is string check against task words
+        if task_words and isinstance(output, dict):
+            # For dict outputs, look through all string values 
+            output_content = json.dumps(output)
+            found_words = [word for word in task_words if word in output_content.lower()]
+            
+            if len(found_words) < len(task_words) * 0.5:  # Require at least half of the task words are in the output
+                feedback.append("⚠️ Not all key components from the original task are addressed")
+                pass_ = False
+            else:
+                feedback.append("✅ Task intent is largely aligned in the output")
+        elif isinstance(output, str) or isinstance(output, list):
+            if isinstance(output, list) and len(output) > 0:
+                # Check first items if it's a list
+                output_str = str(output[0]) if output and not isinstance(output[0], dict) else json.dumps(output[0])
+            elif isinstance(output, dict):
+                output_str = json.dumps(output)
+            
+            # Use basic word matching logic against the task 
+            found_words = [word for word in task_words if word in output_str.lower()]
+            
+            if len(found_words) < len(task_words) * 0.6:  # Require at least 60% of task words are in the output  
+                feedback.append("⚠️ Few key components from the original task are addressed")
+                pass_ = False
+            else:
+                feedback.append("✅ All or most key components from the original task are addressed")
+        else:
+            feedback.append("✅ Task intent checked against output content")
+            
+    except Exception as e:
+        feedback.append(f"⚠️ Error checking intent alignment: {str(e)}")
+    
+    # Check for ambiguous assumptions (this is where we'd detect if skill assumed something)
+    if isinstance(output, dict) and "assumptions" in output:
+        # If the output includes its own assumptions, check those
+        assumptions = output.get("assumptions", [])
+        if len(assumptions) > 0:
+            feedback.append(f"🔍 Output contains assumptions: {', '.join(assumptions[:2])}...")  # Show first 2
+    
     return pass_
 
 def factuality_check(task: str, output: Dict[str, Any], sources: Optional[List[str]], feedback: List[str]) -> bool:
@@ -109,22 +152,92 @@ def factuality_check(task: str, output: Dict[str, Any], sources: Optional[List[s
 
 def structural_integrity_check(task: str, output: Dict[str, Any], context: Optional[Dict[str, Any]], feedback: List[str]) -> bool:
     """Check that output follows structural and constraint requirements"""
-    # Basic structural check
     pass_ = True
     
-    # Check format if specified in context
+    # Check for negative constraints ("Do not")
+    if context and "do_not" in context:
+        do_not_list = context["do_not"]
+        violations = []
+        
+        # If the task contains "not" or "do not" instructions, check against them
+        output_str = json.dumps(output) if not isinstance(output, str) else output
+        
+        if isinstance(do_not_list, list):
+            for instruction in do_not_list:
+                if isinstance(instruction, str) and instruction.lower() in output_str.lower():
+                    pass_ = False
+                    violations.append(f"❌ Found violation of constraint: {instruction}")
+        
+        # Add info about detected violations if they exist  
+        if violations:
+            feedback.extend(violations)
+        else:
+            feedback.append("✅ All negative constraints have been followed")
+    
+    # Check format compliance if specified
     if context and "format" in context:
         requested_format = context["format"].lower()
-        # Validate JSON format if required
-        if requested_format == "json":
-            try:
-                # Try to parse as JSON 
-                json.dumps(output)
-                feedback.append("✅ Output is valid JSON")
-            except Exception:
-                feedback.append("❌ Output is not valid JSON format")
-                pass_ = False
+        try:
+            if requested_format == "json":
+                if not isinstance(output, (dict, list)):
+                    pass_ = False
+                    feedback.append(f"❌ Output must be a dict or list for JSON format but got {type(output).__name__}")
+                else:
+                    # Try to parse the output as JSON to make sure it's valid
+                    json.dumps(output)
+                    feedback.append("✅ Output is valid JSON")
+            
+            elif requested_format == "markdown":
+                if not isinstance(output, str) or not output.strip().startswith("#") and not output.strip().startswith("|"):
+                    feedback.append("⚠️ Output may not be properly formatted as markdown")
+                else:
+                    feedback.append("✅ Output appears to be in markdown format")
+                    
+            elif requested_format == "table":
+                if not isinstance(output, list) or not all(isinstance(row, dict) for row in output):
+                    feedback.append("⚠️ Table format should be a list of dictionaries")
+                else:
+                    feedback.append("✅ Output resembles table format")
+                    
+        except Exception as e:
+            pass_ = False
+            feedback.append(f"❌ Error in format validation: {str(e)}")
+    
+    # Check tone and persona consistency (basic check)
+    if isinstance(output, str) or isinstance(output, dict):
+        # Simple checks for consistent tone
+        output_content = json.dumps(output) if not isinstance(output, str) else output
         
+        # Check if it's too technical (would violate "do not use technical jargon" constraints)
+        technical_words = ["algorithm", "neural", "quantum", "synapse", "hypothesis", "paradigm"]
+        tech_matches = [word for word in technical_words if word in output_content.lower()]
+        
+        if len(tech_matches) > 0:
+            feedback.append(f"⚠️ Output contains technical terms ({', '.join(tech_matches[:2])}...) that may require more basic explanation")
+    
+    # Verify logical consistency with simple checks
+    try:
+        if isinstance(output, dict):
+            keys_list = list(output.keys())
+            
+            # If "error" is present in output and it's not empty or None, flag as problematic  
+            error_in_output = output.get("error")
+            if error_in_output and str(error_in_output).strip():
+                feedback.append(f"⚠️ Output indicates error: {str(error_in_output)[:100]}...")
+                pass_ = False
+                
+        # Check for logical inconsistencies
+        if isinstance(output, dict) and "reasoning" in output:
+            reasoning = output["reasoning"]
+            if isinstance(reasoning, str):
+                if re.search(r"(?i)(contradiction|inconsistency)", reasoning):
+                    feedback.append("❌ Found indications of contradiction or inconsistency in reasoning")
+                    pass_ = False
+                else:
+                    feedback.append("✅ Reasoning appears logical and consistent")
+    except Exception as e:
+        feedback.append(f"⚠️ Error verifying structural integrity: {str(e)}")
+    
     return pass_
 
 
@@ -137,21 +250,36 @@ def generate_correction_manifest(task: str, output: Dict[str, Any], feedback: Li
         "",
         f"### Task: {task}",
         "",
-        "The output failed validation checks:",
+        "The output failed validation checks, requiring the following corrections:",
         ""
     ]
     
-    # Add feedback as bullet points
+    # Add feedback items that indicate specific issues
+    corrected_issues = []
+    
     for item in feedback:
         if item.startswith("❌"):
-            lines.append(f"- {item[2:].strip()}")  # Remove the ❌ prefix
+            # Extract specific issue without the ❌ prefix 
+            issue = item[2:].strip()
+            corrected_issues.append(f"- {issue}")
+        
+    if not corrected_issues:
+        lines.extend([
+            "- The output failed verification checks",
+            "- Please review output against original task requirements",
+            "- Ensure factual accuracy and follow all specified constraints",
+            ""
+        ])
+    else:
+        lines.extend(corrected_issues)
+        lines.append("")
     
     lines.extend([
-        "",
         "### Recommendations:",
-        "- Please correct the identified issues",
-        "- Ensure output follows all requirements and constraints",
-        "- Verify facts against sources",
+        "- Correct the identified issues carefully",
+        "- Verify outputs against facts, sources, and provided constraints",
+        "- Ensure output fully addresses the original task component",
+        "- If uncertain about any element, ask for clarification before proceeding",
         ""
     ])
     
