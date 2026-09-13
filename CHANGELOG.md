@@ -18,7 +18,20 @@ Initial repository skeleton created with:
 ## [Unreleased]
 
 ### Added
-- New quality gate skills: `skill-reviewer` (subjective expert critique) and `skill-hygiene-check` (mechanical conformance sweep)
-- Documentation policy enforcement for quality gates
-- Run Receipt registration capabilities for skills
-- New runtime skill: `use-capability` - the runtime front door that routes user goals to existing tools/skills
+- Folder management system for skill execution with dedicated temp and deliverables directories
+- `src/passist/api/skill_folder_manager.py` module for handling temporary file operations
+- Comprehensive documentation in `/docs/skill-folder-management-implementation.md`
+- Project-level documentation in `/docs/project/folder-management.md`
+- Enhanced error handling and logging for file system operations
+- Context manager approach for automatic setup and cleanup
+
+### Changed
+- Updated AGENTS.md to include documentation of the new folder management system
+- Standardized directory structure usage across skills execution
+
+## [0.1.0] - 2026-09-12
+
+### Added
+- Initial framework implementation for passist agent
+- Skills and tools infrastructure
+- Basic execution flow with CLI support

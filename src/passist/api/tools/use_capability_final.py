@@ -8,6 +8,7 @@ then executes them appropriately.
 import json
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
+from ..registry import ToolSpec
 
 class UseCapabilityArgs(BaseModel):
     """Arguments for useCapability tool"""
@@ -62,11 +63,11 @@ def run_use_capability(args: UseCapabilityArgs) -> Dict[str, Any]:
         
     return result
 
-# Tool specification  
-spec = {
-    "name": "useCapability",
-    "description": "Route a user's stated goal to the right existing tool or skill and run it",
-    "side_effect": False,
-    "input_model": UseCapabilityArgs,
-    "run": run_use_capability
-}
+# Tool specification
+spec = ToolSpec(
+    name="useCapability",
+    description="Route a user's stated goal to the right existing tool or skill and run it",
+    side_effect=False,
+    input_model=UseCapabilityArgs,
+    run=run_use_capability
+)

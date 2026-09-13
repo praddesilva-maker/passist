@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import os
 from pathlib import Path
+from ..registry import ToolSpec
 
 class ReadLocalFileArgs(BaseModel):
     """Arguments for readLocalFile tool"""
@@ -54,10 +55,10 @@ def run_read_local_file(args: ReadLocalFileArgs) -> Dict[str, Any]:
         raise Exception(f"Error reading file {args.path}: {str(e)}")
 
 # Tool specification - the very last line of this file
-spec = {
-    "name": "readLocalFile",
-    "description": "Read a local .md/.txt/.docx/.pdf and return extracted text + basic metadata",
-    "side_effect": False,  # Read-only operation
-    "input_model": ReadLocalFileArgs,
-    "run": run_read_local_file
-}
+spec = ToolSpec(
+    name="readLocalFile",
+    description="Read a local .md/.txt/.docx/.pdf and return extracted text + basic metadata",
+    side_effect=False,  # Read-only operation
+    input_model=ReadLocalFileArgs,
+    run=run_read_local_file
+)

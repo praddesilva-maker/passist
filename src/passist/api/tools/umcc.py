@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional, Union
 from urllib.parse import urlparse
 import logging
+from ..registry import ToolSpec
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -296,10 +297,10 @@ def is_valid_url(url: str) -> bool:
 
 
 # Tool specification 
-spec = {
-    "name": "umcc",
-    "description": "Universal Meta-Cognitive Critic - mandatory QA layer for validating all skill outputs",
-    "side_effect": False,
-    "input_model": UmccArgs,
-    "run": run_umcc
-}
+spec = ToolSpec(
+    name="umcc",
+    description="Universal Meta-Cognitive Critic - mandatory QA layer for validating all skill outputs",
+    side_effect=False,
+    input_model=UmccArgs,
+    run=run_umcc
+)
