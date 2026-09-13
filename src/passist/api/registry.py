@@ -21,6 +21,7 @@ from .tools.update_thing import spec as update_thing_spec
 from .tools.use_capability_final import spec as use_capability_spec
 from .tools.read_local_file import spec as read_local_file_spec
 from .tools.umcc import spec as umcc_spec
+from .tools.excel_creator import spec as excel_creator_spec
 
 TOOLS: list[ToolSpec] = [
     get_thing_spec,
@@ -28,6 +29,7 @@ TOOLS: list[ToolSpec] = [
     use_capability_spec,
     read_local_file_spec,
     umcc_spec,
+    excel_creator_spec,
 ]
 
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}

@@ -1,0 +1,70 @@
+HOME BUDGET TRACKER TEMPLATE
+============================
+
+This is a comprehensive template for tracking your home budget across multiple categories and time periods.
+
+SHEET 1: INCOME TRACKING
+------------------------
+Date | Source | Amount | Category
+-----|--------|--------|----------
+2024-01-01 | Salary | $5,000.00 | Primary Income
+2024-01-02 | Freelance | $300.00 | Secondary Income
+
+SHEET 2: EXPENSE CATEGORIES
+----------------------------
+Category | Subcategory | Monthly Budget | Notes
+--------|-------------|----------------|------
+Housing | Rent/Mortgage | $1,500.00 |
+Housing | Utilities | $200.00 |
+Food | Groceries | $400.00 |
+Food | Dining Out | $150.00 |
+Transportation | Gas | $300.00 |
+Transportation | Public Transit | $100.00 |
+Healthcare | Insurance | $200.00 |
+Healthcare | Medications | $50.00 |
+Entertainment | Movies | $50.00 |
+Entertainment | Hobbies | $75.00 |
+Personal Care | Haircuts | $30.00 |
+Personal Care | Clothing | $100.00 |
+Insurance | Auto Insurance | $80.00 |
+Insurance | Home Insurance | $60.00 |
+Savings | Emergency Fund | $300.00 |
+Savings | Retirement | $500.00 |
+
+SHEET 3: MONTHLY EXPENSE TRACKING
+----------------------------------
+Month | Rent/Mortgage | Utilities | Groceries | Dining Out | Gas | Public Transit | Insurance | Medications | Movies | Hobbies | Haircuts | Clothing | Auto Insurance | Home Insurance | Emergency Fund | Retirement | Total Expenses | Net Income | Savings Rate
+------|---------------|-----------|-----------|------------|-----|--------------|-----------|-------------|--------|---------|----------|----------|----------------|----------------|----------------|------------|----------------|------------|------------
+Jan 2024 | $1,500.00 | $200.00 | $400.00 | $150.00 | $300.00 | $100.00 | $200.00 | $50.00 | $50.00 | $75.00 | $30.00 | $100.00 | $80.00 | $60.00 | $300.00 | $500.00 | $4,295.00 | $5,300.00 | 19.0%
+
+SHEET 4: SAVINGS TRACKER
+-------------------------
+Date | Goal Name | Target Amount | Current Amount | Status
+-----|-----------|---------------|----------------|--------
+2024-01-01 | Emergency Fund | $5,000.00 | $2,500.00 | In Progress
+2024-01-01 | Vacation | $2,000.00 | $1,200.00 | In Progress
+
+SHEET 5: YEARLY SUMMARY
+-----------------------
+Category | Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | Dec | Year Total
+--------|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|----------
+Housing | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $1,500 | $18,000.00
+Food | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $400 | $4,800.00
+Transportation | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $300 | $3,600.00
+
+INSTRUCTIONS FOR USE:
+---------------------
+1. Copy data from this template into Excel worksheets
+2. Use data validation for category fields to ensure consistency
+3. Set up conditional formatting for savings goals (%)
+4. Create charts for visual analysis of spending trends
+5. Update monthly with actual figures to monitor budget performance
+6. Add rows as needed for new categories or income sources
+
+This template includes:
+- Detailed tracking of 15+ expense categories
+- Monthly and yearly budget comparisons
+- Savings goal tracking
+- Income sources tracking
+- Data validation for consistent category entries
+- Calculations for net income and savings rates

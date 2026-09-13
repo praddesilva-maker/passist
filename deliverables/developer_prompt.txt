@@ -1,0 +1,41 @@
+# Developer Task: Fix Excel Creation in Passist Framework
+
+## Objective
+Create a functional excel-creator skill that can generate a comprehensive home budget workbook with the following features:
+
+## Requirements
+1. **Complete Budget Workbook Structure**: 
+   - Income tracking sheet (with date, source, amount, category)
+   - Expense categories sheet (15+ detailed categories with monthly budgets)  
+   - Monthly expense tracking sheet (12 months data, expense categories)
+   - Savings tracker sheet (goal tracking with progress)
+   - Yearly summary sheet (comparative analysis across months)
+
+2. **Excel Features Required**:
+   - Multiple worksheets as specified
+   - Proper data validation for consistent category entries
+   - Formulas for automatic calculations (net income, savings rates, totals)
+   - Conditional formatting support
+   - Chart-ready data structure
+
+## Current Issues to Resolve
+1. The `excel-creator` skill is not functioning properly - it times out or doesn't produce Excel files
+2. Missing dependencies or incorrect implementation in the skill
+3. Environment configuration issues preventing proper execution
+
+## Expected Output
+An actual .xlsx file that contains all the sheets with appropriate data structure and formatting, saved to the deliverables directory.
+
+## Technical Details
+- The Excel workbook should be created using `openpyxl` or pandas library 
+- Should follow the passist framework's skill execution pattern with `skill_execution_context()`
+- Uses same structure as discussed: 15+ expense categories, 12 months tracking, detailed savings goals
+- Must be placed in `/deliverables` directory and named `home_budget_tracker.xlsx`
+
+## Validation
+The fix should result in a working version that can be executed with:
+```
+python -m passist.api.run excel-creator --topic "Home Budget Tracker" --format xlsx
+```
+
+This workbook should be functionally identical to what was described in our requirements discussion.
