@@ -1,8 +1,0 @@
-{
-  "baselines": {
-    "skill_template": {
-      "human_minutes_per_unit": 30,
-      "cost_per_unit": 0.5
-    }
-  }
-}
