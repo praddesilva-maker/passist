@@ -1,0 +1,24 @@
+# Core Dependencies
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# LangChain Dependencies
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.1.0
+
+# GLM (Qwen) Integration
+langchain-glm>=0.0.1
+
+# SQLite for local storage
+# (Built into Python standard library)
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Optional: For better logging
+colorlog>=6.7.0
+
+# Optional: For async support
+asyncio>=3.4.3
