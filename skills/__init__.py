@@ -4,11 +4,11 @@
 from .registry import SkillRegistry
 from .unified_stage import UnifiedSkillStage
 from .skill_builder import SkillBuilder
-from .qa_skill import QAExpertSkill
+from .qa_skill import SkillQA
 
 __all__ = [
     "SkillRegistry",
     "UnifiedSkillStage",
     "SkillBuilder",
-    "QAExpertSkill"
+    "SkillQA"
 ]

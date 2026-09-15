@@ -1,177 +1,598 @@
 #!/usr/bin/env python3
-"""Personal Assistant Agent - Main Implementation"""
+"""
+Main Agent.
+
+:class:`MainAgent` is the single entry point of the Personal Assistant.  It
+combines:
+
+* the central :class:`~skills.registry.SkillRegistry` (SQLite, Git-controlled),
+* the unified :class:`~skills.unified_stage.UnifiedSkillStage` that executes
+  every skill type (``function`` / ``agent`` / ``workflow``) uniformly,
+* an optional LLM (see :mod:`agent.llm`) for intent detection and skill
+  development, with deterministic regex/heuristic fallbacks so the agent is
+  fully operational offline,
+* a small in-memory (or file-backed) memory store,
+* an optional :class:`~skills.git_manager.GitManager` for commit history.
+
+``handle_request`` always returns a stable dict::
+
+    {
+        "intent": "use_skill" | "develop_skill" | "unknown",
+        "success": bool,         # request handled without an unhandled error
+        "skill_name": str | None,
+        "result": dict,          # success/error/output payload
+        "response": str,         # human-readable text for display
+        "error": str | None,
+        # development-only extras:
+        "registry_status": dict, # {"total_skills": int, "active_skills": int}
+        "skill": dict | None,    # registry row for the named skill
+    }
+"""
+
 import json
-import asyncio
-from typing import Dict, Any, Optional, List, Tuple
-from dataclasses import dataclass, field
-from datetime import datetime
-try:
-    from langchain.agents import AgentExecutor, create_tool_calling_agent
-    from langchain_core.prompts import PromptTemplate
-    from langchain_core.tools import tool
-    from langchain_glm import ChatGLM
-except ImportError:
-    pass
-from .agent_config import AgentConfig
-from skills.registry import SkillRegistry
+import os
+import re
+import time
+from typing import Any, Dict, Optional, Tuple
+
+from skills.registry import SkillRegistry, SkillAlreadyExistsError
 from skills.unified_stage import UnifiedSkillStage
 from skills.skill_builder import SkillBuilder
-from config import config
+from skills.git_manager import GitManager, GitManagerError
 
-class IntentType:
-    CREATE_SKILL = "create_skill"
-    USE_SKILL = "use_skill"
-    GENERAL = "general"
+from .llm import extract_text
 
-@dataclass
-class ExecutionResult:
-    success: bool
-    skill_name: str
-    skill_type: str
-    output: Any
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
-    execution_time_ms: float = 0.0
+# ---------------------------------------------------------------------------
+# Intent vocabulary (stable, documented in PERSONAL_ASSISTANT_GUIDE.md)
+# ---------------------------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {"success": self.success, "skill_name": self.skill_name, "skill_type": self.skill_type, "output": self.output, "metadata": self.metadata, "error": self.error, "execution_time_ms": self.execution_time_ms}
+INTENT_USE_SKILL = "use_skill"
+INTENT_DEVELOP_SKILL = "develop_skill"
+INTENT_UNKNOWN = "unknown"
 
-class PersonalAssistantAgent:
-    def __init__(self, config: AgentConfig = None, registry: SkillRegistry = None):
-        self.config = config or AgentConfig()
-        self.registry = registry or SkillRegistry(db_path=config.database.db_path if hasattr(config, "database") else config.db_path)
-        self.skill_stage = UnifiedSkillStage(registry=self.registry)
-        self.glm = None
-        self._init_glm()
-        if self.config.enable_skill_builder:
-            self.skill_builder = SkillBuilder(registry=self.registry, agent=self)
-        self._new_skill_pipeline = None
-        self._existing_skill_pipeline = None
-        self.stats = {"skills_created": 0, "skills_used": 0, "intent_detections": 0}
+_DEVELOP_KEYWORDS = (
+    "develop skill", "develop a skill", "develop the skill", "develop new skill",
+    "create skill", "create a skill", "create new skill", "new skill",
+    "add skill", "add a skill", "make a skill", "build a skill", "write a skill",
+    "create function", "create agent", "create workflow",
+)
 
-    def _init_glm(self):
-        if self.config.glm_model:
+_USE_KEYWORDS = (
+    "use skill", "run skill", "execute skill", "call skill",
+    "do skill", "apply skill", "use the skill", "use my skill",
+    "run the skill",
+)
+
+_NAME_PATTERNS = (
+    r"(?:use|run|execute|call|do|apply)\s+skill\s+named\s+['\"]?([A-Za-z0-9_\-]+)",
+    r"(?:use|run|execute|call|do|apply)\s+skill\s+['\"]?([A-Za-z0-9_\-]+)",
+    r"(?:use|run|execute|call|do|apply)\s+['\"]?([A-Za-z0-9_\-]+)",
+    r"skill\s+(?:named\s+)?['\"]?([A-Za-z0-9_\-]+)",
+)
+
+_DEVELOP_NAME_PATTERNS = (
+    r"(?:develop|create|make|build|add|write)\s+(?:a\s+|new\s+)?(?:\w+\s+)?skill\s+(?:named\s+|called\s+)?['\"]?([A-Za-z0-9_\-]+)",
+)
+
+
+class _DictMemoryBackend:
+    """Minimal in-process memory backend (dict of string values)."""
+
+    def __init__(self) -> None:
+        self._store: Dict[str, str] = {}
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self._store.get(key)
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        self._store[key] = value if isinstance(value, str) else json.dumps(value)
+
+    def snapshot(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for k, v in self._store.items():
             try:
-                if self.config.glm_api_key:
-                    self.glm = ChatGLM(model_name=self.config.glm_model, temperature=self.config.glm_temperature, max_tokens=self.config.glm_max_tokens, api_key=self.config.glm_api_key)
-                else:
-                    base_url = getattr(config, "glm", None)
-                    if base_url and base_url.base_url:
-                        self.glm = ChatGLM(model_name=self.config.glm_model, temperature=self.config.glm_temperature, max_tokens=self.config.glm_max_tokens, api_key=self.config.glm_api_key, base_url=base_url.base_url)
-            except Exception as e:
-                print(f"Warning: Could not initialize GLM: {e}")
-                self.glm = None
+                out[k] = json.loads(v)
+            except (ValueError, TypeError):
+                out[k] = v
+        return out
 
-    @property
-    def new_skill_pipeline(self):
-        if self._new_skill_pipeline is None:
-            self._new_skill_pipeline = NewSkillPipeline(self, self.registry)
-        return self._new_skill_pipeline
 
-    @property
-    def existing_skill_pipeline(self):
-        if self._existing_skill_pipeline is None:
-            self._existing_skill_pipeline = ExistingSkillPipeline(self, self.registry)
-        return self._existing_skill_pipeline
+class _FileMemoryBackend:
+    """Tiny JSON-file memory backend (one file, last-write-wins)."""
 
-    async def process_input(self, user_input: str, **kwargs) -> ExecutionResult:
-        start_time = datetime.now()
-        if "skill_name" in kwargs:
-            skill_name = kwargs["skill_name"]
-            skill_type = kwargs.get("skill_type", "function")
-            params = kwargs.get("parameters", {})
-            result = await self._execute_skill_directly(skill_name, skill_type, params, **kwargs)
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self._store: Dict[str, str] = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                self._store = {
+                    k: v if isinstance(v, str) else json.dumps(v, default=str)
+                    for k, v in loaded.items()
+                }
+            except (ValueError, OSError):
+                self._store = {}
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self._store.get(key)
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        self._store[key] = value if isinstance(value, str) else json.dumps(value)
+        try:
+            dirname = os.path.dirname(os.path.abspath(self.path))
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+            with open(self.path, "w", encoding="utf-8") as fh:
+                json.dump(self._store, fh)
+        except OSError:
+            pass
+
+    def snapshot(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for k, v in self._store.items():
+            try:
+                out[k] = json.loads(v)
+            except (ValueError, TypeError):
+                out[k] = v
+        return out
+
+
+class MainAgent:
+    """Personal assistant agent with intent detection, skill use and development."""
+
+    MEMORY_KEY_SKILL_COUNT = "skill_count"
+    MEMORY_KEY_RECENT_ACTIONS = "recent_actions"
+    MEMORY_KEY_LAST_RESULT = "last_result"
+    RECENT_ACTIONS_LIMIT = 10
+
+    def __init__(
+        self,
+        agent_name: str = "Personal Assistant",
+        stage: Optional[UnifiedSkillStage] = None,
+        registry: Optional[SkillRegistry] = None,
+        llm: Any = None,
+        git_manager: Optional[GitManager] = None,
+        memory_backend: Any = "memory",
+    ) -> None:
+        self.agent_name = agent_name
+        self.registry = registry or SkillRegistry()
+        self.stage = stage or UnifiedSkillStage(self.registry)
+        self.llm = llm
+        self.git_manager = git_manager
+        self.skill_builder = SkillBuilder(self.registry)
+        self.memory = self._build_memory(memory_backend)
+        self.stats = {"requests": 0, "skills_used": 0, "skills_created": 0}
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def cleanup(self) -> None:
+        """Release agent resources and close the underlying registry.
+
+        Safe to call more than once, and never raises: teardown must not mask
+        a test failure or crash a shutting-down CLI.
+        """
+        try:
+            if self.registry is not None:
+                self.registry.close()
+        except Exception:  # pragma: no cover - teardown must never raise
+            pass
+        self.llm = None
+        self.git_manager = None
+
+    def __enter__(self) -> "MainAgent":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.cleanup()
+
+    # ------------------------------------------------------------------
+    # Memory
+    # ------------------------------------------------------------------
+
+    def _build_memory(self, memory_backend: Any) -> Any:
+        if memory_backend is None or memory_backend == "memory":
+            return _DictMemoryBackend()
+        if isinstance(memory_backend, str):
+            return _FileMemoryBackend(memory_backend)
+        # Assume an object exposing .get / .set
+        return memory_backend
+
+    def _remember_action(self, intent: str, skill_name: Optional[str]) -> None:
+        try:
+            actions = self.memory.get(self.MEMORY_KEY_RECENT_ACTIONS, []) or []
+            if not isinstance(actions, list):
+                actions = []
+            actions.append({"intent": intent, "skill": skill_name, "at": time.time()})
+            self.memory.set(
+                self.MEMORY_KEY_RECENT_ACTIONS,
+                actions[-self.RECENT_ACTIONS_LIMIT :],
+            )
+        except Exception:  # memory must never break the request
+            pass
+
+    def get_memory(self) -> Dict[str, Any]:
+        try:
+            return self.memory.snapshot()
+        except Exception:
+            return {}
+
+    # ------------------------------------------------------------------
+    # Intent detection
+    # ------------------------------------------------------------------
+
+    def detect_intent(self, request: str) -> str:
+        """Classify a request into use_skill / develop_skill / unknown.
+
+        Uses the LLM when one is available and can generate; otherwise (or on
+        any failure) falls back to deterministic keyword matching.
+        """
+        text = (request or "").strip()
+        if not text:
+            return INTENT_UNKNOWN
+        if self.llm is not None and not getattr(self.llm, "is_offline", False):
+            intent = self._detect_intent_llm(text)
+            if intent:
+                return intent
+        return self._detect_intent_heuristic(text)
+
+    def _detect_intent_llm(self, text: str) -> Optional[str]:
+        prompt = (
+            "Classify the user request into exactly one of: "
+            f"'{INTENT_USE_SKILL}', '{INTENT_DEVELOP_SKILL}', '{INTENT_UNKNOWN}'. "
+            "Return only the intent string, nothing else.\n\n"
+            f"Request: {text!r}"
+        )
+        try:
+            response = self.llm.invoke(prompt)
+        except Exception:
+            return None
+        raw = extract_text(response).strip().strip("`\"' \n")
+        for intent in (INTENT_USE_SKILL, INTENT_DEVELOP_SKILL, INTENT_UNKNOWN):
+            if intent in raw.lower():
+                return intent
+        return None
+
+    @staticmethod
+    def _detect_intent_heuristic(text: str) -> str:
+        lowered = text.lower()
+        # "develop a skill that uses X" must classify as develop, not use.
+        if any(k in lowered for k in _DEVELOP_KEYWORDS) or re.search(
+            r"\b(?:develop|create|make|build|write|add)\s+"
+            r"(?:a\s+|new\s+|the\s+)?(?:[A-Za-z]+\s+)?skill\b",
+            lowered,
+        ):
+            return INTENT_DEVELOP_SKILL
+        if any(k in lowered for k in _USE_KEYWORDS) or re.search(
+            r"\b(run|execute|call|do|apply)\s+(?:a\s+)?skill\b", lowered
+        ):
+            return INTENT_USE_SKILL
+        if re.search(r"\b(?:use|run|execute)\s+(?:my\s+|the\s+)?skill\b", lowered):
+            return INTENT_USE_SKILL
+        return INTENT_UNKNOWN
+
+    # ------------------------------------------------------------------
+    # Request extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def extract_skill_args(
+        request: str, request_data: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
+        """Extract (skill_name, input_data) from a use_skill request.
+
+        ``request_data`` (a dict, or a JSON string under ``"input"``) takes
+        precedence for arguments.  A trailing JSON object or ``key=value``
+        pairs in the request text are parsed as arguments.
+        """
+        data: Dict[str, Any] = {}
+        name: Optional[str] = None
+
+        if request_data:
+            if isinstance(request_data, str):
+                try:
+                    request_data = json.loads(request_data)
+                except (ValueError, TypeError):
+                    request_data = {}
+            if isinstance(request_data, dict):
+                if isinstance(request_data.get("name"), str):
+                    name = request_data["name"].strip()
+                for key in ("input", "input_data", "arguments", "args"):
+                    if isinstance(request_data.get(key), dict):
+                        data.update(request_data[key])
+                for key, value in request_data.items():
+                    if key not in ("name", "input", "input_data", "arguments", "args"):
+                        data[key] = value
+
+        text = (request or "").strip()
+        # Trailing JSON object:  use skill adder {"x": 2, "y": 3}
+        json_match = re.search(r"(\{.*\})\s*$", text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                if isinstance(parsed, dict):
+                    data.update(parsed)
+                    text = text[: json_match.start()].strip()
+            except (ValueError, TypeError):
+                pass
+        # key=value pairs:  use skill adder x=2 y=3
+        kv = re.findall(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('[^']*'|\"[^\"]*\"|\S+)", text
+        )
+        for key, raw_value in kv:
+            if key.lower() in ("skill", "name"):
+                continue
+            value: Any = raw_value
+            try:
+                value = json.loads(raw_value)
+            except (ValueError, TypeError):
+                if (
+                    len(raw_value) >= 2
+                    and raw_value[0] == raw_value[-1]
+                    and raw_value[0] in ("'", '"')
+                ):
+                    value = raw_value[1:-1]
+            data[key] = value
+
+        if not name:
+            for pattern in _NAME_PATTERNS:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    name = match.group(1)
+                    break
+
+        return name, data
+
+    @staticmethod
+    def extract_develop_args(
+        request: str, request_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Extract {name, code, skill_type, description} from a develop request."""
+        args: Dict[str, Any] = {
+            "name": None, "code": None, "skill_type": None, "description": None,
+        }
+        parsed = request_data
+        if isinstance(request_data, str):
+            try:
+                parsed = json.loads(request_data)
+            except (ValueError, TypeError):
+                parsed = None
+        if isinstance(parsed, dict):
+            args["name"] = parsed.get("name")
+            args["code"] = parsed.get("code")
+            args["skill_type"] = parsed.get("skill_type") or parsed.get("type")
+            args["description"] = parsed.get("description")
+
+        text = (request or "").strip()
+        # Fenced code block
+        fence = re.search(r"```[a-zA-Z]*\n(.*?)```", text, re.DOTALL)
+        if fence and not args["code"]:
+            args["code"] = fence.group(1).strip()
+        # Explicit "code:" line
+        if not args["code"]:
+            code_line = re.search(r"^\s*code\s*:\s*(.+)$", text, re.MULTILINE)
+            if code_line:
+                args["code"] = code_line.group(1).strip()
+        # Skill type
+        if not args["skill_type"]:
+            type_match = re.search(
+                r"\b(?:skill\s+type|type)\s*[:=]\s*(function|agent|workflow)",
+                text, re.IGNORECASE,
+            )
+            if type_match:
+                args["skill_type"] = type_match.group(1).lower()
+        # Name
+        if not args["name"]:
+            for pattern in _DEVELOP_NAME_PATTERNS:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    args["name"] = match.group(1)
+                    break
+        if args["name"] is None and args["code"]:
+            args["name"] = "generated_skill"
+        return args
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    def handle_request(
+        self,
+        request: str,
+        request_data: Optional[Dict[str, Any]] = None,
+        include_dev: bool = True,
+    ) -> Dict[str, Any]:
+        """Handle one user request; always returns a stable result dict."""
+        self.stats["requests"] += 1
+        intent = self.detect_intent(request)
+        if intent == INTENT_DEVELOP_SKILL:
+            result = self._handle_develop_skill(request, request_data)
+        elif intent == INTENT_USE_SKILL:
+            result = self._handle_use_skill(request, request_data)
         else:
-            intent = await self._detect_intent(user_input)
-            self.stats["intent_detections"] += 1
-            if intent == IntentType.CREATE_SKILL:
-                result = await self.new_skill_pipeline.create_skill(user_input)
-            elif intent == IntentType.USE_SKILL:
-                result = await self.existing_skill_pipeline.use_skill(user_input, **kwargs)
-            else:
-                result = await self._handle_general_input(user_input, **kwargs)
-        execution_time = (datetime.now() - start_time).total_seconds() * 1000
-        result.execution_time_ms = execution_time
-        return result
-
-    async def _execute_skill_directly(self, skill_name: str, skill_type: str, params: Dict[str, Any], **kwargs) -> ExecutionResult:
+            offline = self.llm is None or getattr(self.llm, "is_offline", False)
+            mode = (
+                " (running offline: intent is matched with deterministic rules, "
+                "not an LLM)"
+                if offline
+                else ""
+            )
+            result = {
+                "success": False,
+                "message": (
+                    "I could not determine what you want to do"
+                    f"{mode}. "
+                    "Try 'use skill <name>' or 'develop a skill named <name>'."
+                ),
+            }
+        skill_name = result.get("skill_name")
+        self._remember_action(intent, skill_name)
         try:
-            skill = self.registry.get_skill(skill_name)
-            if not skill:
-                return ExecutionResult(success=False, skill_name=skill_name, skill_type=skill_type, output=None, error=f"Skill '{skill_name}' not found in registry")
-            result = await self.skill_stage.execute_skill(skill_name, params, skill_type)
-            return result
-        except Exception as e:
-            return ExecutionResult(success=False, skill_name=skill_name, skill_type=skill_type, output=None, error=str(e))
+            self.memory.set(self.MEMORY_KEY_LAST_RESULT, result)
+            self.memory.set(
+                self.MEMORY_KEY_SKILL_COUNT,
+                self.get_registry_status()["total_skills"],
+            )
+        except Exception:
+            pass
 
-    async def _detect_intent(self, user_input: str) -> str:
-        if self.glm:
-            return await self._detect_intent_glm(user_input)
-        return self._detect_intent_regex(user_input)
+        # "success" here means the request was handled without an unhandled
+        # error -- an unrecognised intent is still handled successfully.  Whether
+        # the requested operation itself succeeded is result["success"].
+        response: Dict[str, Any] = {
+            "intent": intent,
+            "success": True,
+            "skill_name": skill_name,
+            "result": result,
+            # Human-readable text for the CLI / Cline to surface directly.
+            "response": (
+                result.get("message") or result.get("error") or ""
+                if isinstance(result, dict)
+                else str(result)
+            ),
+            "error": result.get("error") if isinstance(result, dict) else None,
+        }
+        if include_dev:
+            response["registry_status"] = self.get_registry_status()
+            response["skill"] = (
+                self.registry.get_skill(skill_name) if skill_name else None
+            )
+        return response
 
-    async def _detect_intent_glm(self, user_input: str) -> str:
+    def _handle_use_skill(
+        self, request: str, request_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        name, input_data = self.extract_skill_args(request, request_data)
+        if not name:
+            return {
+                "success": False,
+                "skill_name": None,
+                "error": "No skill name found in the request.",
+            }
+        skill = self.registry.get_skill(name)
+        if skill is None:
+            return {
+                "success": False,
+                "skill_name": name,
+                "error": f"Skill '{name}' is not registered (or inactive).",
+            }
         try:
-            prompt = "Analyze this user input and classify the intent."
-            response = await self.glm.ainvoke(prompt)
-            intent = response.strip().lower().replace("", "").replace(""", "")
-Available intents:
-- 'create_skill': User wants to create a new skill
-- 'use_skill': User wants to use an existing skill
-- 'general': Any other request
+            result = self.stage.execute_skill(name, input_data)
+        except Exception as exc:  # noqa: BLE001 - agent must stay alive
+            return {
+                "success": False,
+                "skill_name": name,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        self.stats["skills_used"] += 1
+        return {
+            "success": bool(result.get("success")),
+            "skill_name": name,
+            "output": result.get("output"),
+            "error": result.get("error"),
+            "skill_type": result.get("skill_type"),
+            "version": result.get("version"),
+            "execution_time_ms": result.get("execution_time_ms"),
+        }
 
-Input: "{user_input}"
+    def _handle_develop_skill(
+        self, request: str, request_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        args = self.extract_develop_args(request, request_data)
+        skill_type = args.get("skill_type") or "function"
+        if skill_type not in ("function", "agent", "workflow"):
+            skill_type = "function"
+        name = args.get("name") or "new_skill"
+        code = args.get("code") or SkillBuilder.offline_template(
+            name, args.get("description") or request
+        )
+        try:
+            registered = self.skill_builder.register(
+                name=name,
+                code=code,
+                skill_type=skill_type,
+                description=args.get("description") or request,
+            )
+        except SkillAlreadyExistsError as exc:
+            return {
+                "success": False,
+                "skill_name": name,
+                "error": str(exc),
+                "suggestion": f"Skill '{name}' already exists; use 'use skill {name}'.",
+            }
+        except Exception as exc:  # noqa: BLE001 - surface registry validation errors
+            return {
+                "success": False,
+                "skill_name": name,
+                "error": f"Skill registration failed: {type(exc).__name__}: {exc}",
+            }
+        # SkillBuilder.register returns a structured payload instead of raising,
+        # so a validation failure arrives as {"success": False, ...}.  Treating
+        # any non-exception return as success reported rejected skills as
+        # registered; propagate the failure instead.
+        if isinstance(registered, dict) and registered.get("success") is False:
+            return {
+                "success": False,
+                "created": False,
+                "registered": False,
+                "skill_name": name,
+                "skill": None,
+                "error": registered.get("error") or f"Skill '{name}' was rejected.",
+            }
 
-Return only the intent type as a JSON string, e.g., "create_skill"."
-            response = await self.glm.ainvoke(prompt)
-            intent = response.strip().lower().replace("", "").replace("'", "")
-            if intent == "create_skill" or ("create" in response.lower() and "skill" in response.lower()):
-                return IntentType.CREATE_SKILL
-            elif intent == "use_skill" or ("use" in response.lower() and "skill" in response.lower()):
-                return IntentType.USE_SKILL
-            return IntentType.GENERAL
-        except Exception as e:
-            print(f"GLM intent detection failed: {e}")
-            return self._detect_intent_regex(user_input)
+        skill = registered.get("skill") if isinstance(registered, dict) else None
+        if skill is None:
+            skill = registered
+        version = skill.get("current_version") if isinstance(skill, dict) else None
 
-    def _detect_intent_regex(self, user_input: str) -> str:
-        input_lower = user_input.lower()
-        if any(keyword in input_lower for keyword in ["create a new skill", "create skill", "make a skill", "add skill", "new skill", "create function", "create agent", "create workflow"]):
-            return IntentType.CREATE_SKILL
-        if any(keyword in input_lower for keyword in ["use skill", "run skill", "execute skill", "call skill", "do skill", "apply skill", "skill that", "skill to"]):
-            return IntentType.USE_SKILL
-        return IntentType.GENERAL
+        self.stats["skills_created"] += 1
+        return {
+            "success": True,
+            "created": True,
+            "registered": True,
+            "skill_name": name,
+            "skill": skill,
+            "message": f"Skill '{name}' registered (v{version}).",
+        }
 
-    async def _handle_general_input(self, user_input: str, **kwargs) -> ExecutionResult:
-        if self.skill_builder and self.config.enable_skill_builder:
-            return ExecutionResult(success=True, skill_name="general", skill_type="function", output={"message": f"General input: {user_input}", "suggestion": "Use 'create a skill' or 'use a skill'"}, metadata={"type": "general"})
-        return ExecutionResult(success=True, skill_name="general", skill_type="function", output={"message": f"General input: {user_input}"}, metadata={"type": "general"})
+    # ------------------------------------------------------------------
+    # Status helpers
+    # ------------------------------------------------------------------
+
+    def get_registry_status(self) -> Dict[str, Any]:
+        try:
+            skills = self.registry.list_skills()
+            inactive = self.registry.list_skills(include_inactive=True)
+            return {
+                "total_skills": len(skills),
+                "active_skills": len(skills),
+                "inactive_skills": len(inactive) - len(skills),
+            }
+        except Exception:
+            return {"total_skills": 0, "active_skills": 0, "inactive_skills": 0}
+
+    def get_git_log(self, limit: int = 10) -> list:
+        """Delegate to :meth:`GitManager.log`; empty list when no git is wired."""
+        if self.git_manager is None:
+            return []
+        try:
+            return self.git_manager.log(limit=limit)
+        except GitManagerError:
+            return []
 
     def get_stats(self) -> Dict[str, Any]:
-        return {"skills_created": self.stats["skills_created"], "skills_used": self.stats["skills_used"], "intent_detections": self.stats["intent_detections"], "config": self.config.model_dump()}
-
-    def reset_stats(self):
-        self.stats = {"skills_created": 0, "skills_used": 0, "intent_detections": 0}
-
-class NewSkillPipeline:
-    def __init__(self, agent, registry):
-        self.agent = agent
-        self.registry = registry
-
-        try:
-    async def create_skill(self, user_input, **kwargs):
-            analysis = self._analyze_with_rules(user_input)
-            skill_type = self.agent.config.default_skill_type
-            skill_structure = self._generate_skill_structure(analysis, skill_type)
-            code = self._generate_function_code(skill_structure)
-            self.agent.stats["skills_created"] += 1
-            skill = self._create_skill_from_structure(skill_structure, skill_type, code)
-            return ExecutionResult(
-                success=True, skill_name=skill["name"], skill_type=skill_type,
-                output={"skill": skill, "code": code},
-                metadata={"analysis": analysis}
-            )
-        except Exception as e:
-            return ExecutionResult(
-                success=False, skill_name="", skill_type="function",
-                output=None, error=str(e)
-            )
+        return dict(self.stats)

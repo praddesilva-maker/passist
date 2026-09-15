@@ -1,105 +1,135 @@
 #!/usr/bin/env python3
 """
-Skill Builder Module
-Interactive skill creation and review
+Skill Builder.
+
+A small, registry-driven factory for creating new skills:
+
+* ``SkillBuilder(registry)`` validates and registers skills *through* the
+  central :class:`~skills.registry.SkillRegistry` only.
+* There is **no filesystem discovery** and **no writes to
+  ``skills/generated/``** - the SQLite registry is the single source of
+  truth for skill code.
+* :meth:`SkillBuilder.offline_template` produces deterministic, valid skill
+  code so skill development keeps working when no ``GLM_API_KEY`` is
+  configured (offline mode).
+
+Every public method returns a structured result dict
+(``{"success": bool, "skill_name": ..., "error": ...}``); validation errors
+raised by the registry are converted into error payloads instead of
+propagating.
 """
 
-from typing import Dict, Any, Optional
-import json
-from datetime import datetime
-from skills.registry import SkillRegistry
-from skills.unified_stage import UnifiedSkillStage
+import re
+from typing import Any, Dict, List, Optional
+
+from .registry import SkillRegistry, RegistryError
+
+
+def _sanitize_name(name: str) -> str:
+    """Reduce an arbitrary name to a registry-safe identifier fragment."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "").strip())
+    cleaned = cleaned.strip("_-") or "new_skill"
+    if not re.match(r"^[A-Za-z0-9]", cleaned):
+        cleaned = f"skill_{cleaned}"
+    return cleaned
+
+
+def _sanitize_description(description: Any) -> str:
+    """Make a description safe to embed in a docstring."""
+    text = str(description or "").strip()
+    text = text.replace("\\", "").replace('"""', "'''")
+    return " ".join(text.split()) or "New skill"
 
 
 class SkillBuilder:
-    """Interactive skill builder with review and validation"""
+    """Registry-driven skill creation with structured payloads."""
 
-    def __init__(self, registry: SkillRegistry, agent):
-        self.registry = registry
-        self.agent = agent
-        self.skill_stage = UnifiedSkillStage(registry)
+    def __init__(self, registry: Optional[SkillRegistry] = None) -> None:
+        self.registry = registry or SkillRegistry()
 
-    def create_skill(self, user_input: str) -> Dict[str, Any]:
-        """Create a new skill from user input"""
+    # ------------------------------------------------------------------
+    # Registration
+    # ------------------------------------------------------------------
+
+    def register(
+        self,
+        name: str,
+        code: str,
+        skill_type: str = "function",
+        description: str = "",
+        parameters: Optional[Dict[str, Any]] = None,
+        examples: Optional[List[Dict[str, Any]]] = None,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """Validate and register a skill via the registry.
+
+        Returns a structured payload instead of raising:
+        ``{"success", "skill_name", "skill_type", "skill", "error"}``.
+        """
         try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            analysis = loop.run_until_complete(
-                self.analyze_request(user_input) if self.agent.glm else self.analyze_request_rules(user_input)
+            skill = self.registry.register_skill(
+                name=name,
+                skill_type=skill_type,
+                description=description,
+                code=code,
+                parameters=parameters,
+                examples=examples,
+                note=note,
             )
-            skill_type = self.agent.config.default_skill_type
-            skill_structure = self.generate_skill_structure(analysis, skill_type)
-            code = self.generate_skill_code(skill_structure, skill_type)
-            skill = self.register_skill(skill_structure, skill_type, code)
-            
+        except RegistryError as exc:
             return {
-                "success": True,
-                "skill": skill,
-                "code": code,
-                "skill_structure": skill_structure
+                "success": False,
+                "skill_name": name,
+                "skill_type": skill_type,
+                "skill": None,
+                "error": f"{type(exc).__name__}: {exc}",
             }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def analyze_request_rules(self, user_input: str) -> Dict[str, Any]:
+        except Exception as exc:  # noqa: BLE001 - keep payloads structured
+            return {
+                "success": False,
+                "skill_name": name,
+                "skill_type": skill_type,
+                "skill": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
         return {
-            "name": user_input.strip().replace(" ", "_").lower(),
-            "description": user_input,
-            "parameters": []
+            "success": True,
+            "skill_name": skill.get("name", name),
+            "skill_type": skill.get("type", skill_type),
+            "skill": skill,
+            "error": None,
         }
 
-    def generate_skill_structure(self, analysis: Dict[str, Any], skill_type: str) -> Dict[str, Any]:
-        return {
-            "name": analysis.get("name", "unnamed_skill"),
-            "description": analysis.get("description", ""),
-            "type": skill_type,
-            "parameters": analysis.get("parameters", []),
-            "examples": [],
-            "code": ""
-        }
+    def list_skills(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
+        """List skills known to the registry (no filesystem scan)."""
+        return self.registry.list_skills(include_inactive=include_inactive)
 
-    def generate_skill_code(self, skill_structure: Dict[str, Any], skill_type: str) -> str:
-        if skill_type == "function":
-            return self._generate_function_code(skill_structure)
-        else:
-            return self._generate_function_code(skill_structure)
+    # ------------------------------------------------------------------
+    # Offline template
+    # ------------------------------------------------------------------
 
-    def _generate_function_code(self, skill_structure: Dict[str, Any]) -> str:
-        name = skill_structure["name"]
-        parameters = skill_structure.get("parameters", [])
-        code = f'"""{skill_structure["description"]}"""\n\n'
-        code += f'@tool\ndef {name}(\n'
-        param_list = [f'    {p["name"]}: {p.get("type", "Any")}' for p in parameters]
-        code += ",\n".join(param_list) + ",\n)\n\n"
-        code += f'    """{skill_structure["description"]}"""\n\n'
-        code += "    # Validate parameters\n"
-        for p in parameters:
-            if p.get("required", True):
-                code += f'    if {p["name"]} is None:\n        raise ValueError(f"{p["name"]} is required")\n\n'
-        code += "    # Your implementation here\n"
-        for p in parameters:
-            code += f"    {p['name']} = {p['name']}\n"
-        code += "\n    return {\n        \"status\": \"success\",\n        \"result\": \"Your implementation here\"\n    }\n"
-        return code
+    @staticmethod
+    def offline_template(name: str, description: str = "") -> str:
+        """Deterministic skill code used when the LLM is unavailable.
 
-    def register_skill(self, skill_structure: Dict[str, Any], skill_type: str, code: str) -> Dict[str, Any]:
-        skill_filename = f"{skill_structure['name']}.py"
-        with open(f"skills/generated/{skill_filename}", 'w') as f:
-            f.write(code)
-        skill_data = {
-            "name": skill_structure["name"],
-            "description": skill_structure.get("description", ""),
-            "type": skill_type,
-            "code": code,
-            "parameters": skill_structure.get("parameters", []),
-            "examples": skill_structure.get("examples", []),
-            "created_at": datetime.now().isoformat(),
-            "versions": [skill_filename]
-        }
-        return self.registry.add_skill(skill_data)
-
-    def list_skills(self):
-        return self.registry.list_skills()
-
+        The generated code always passes
+        :meth:`SkillRegistry.validate_skill` (top-level ``run`` function,
+        valid identifier) and executes cleanly on the unified stage.
+        """
+        ident = re.sub(r"\W", "_", _sanitize_name(name)) or "new_skill"
+        desc = _sanitize_description(description)
+        # NOTE: built by concatenation, not str.format().  The generated code
+        # contains a dict literal, and its braces would otherwise be parsed as
+        # format replacement fields (KeyError at runtime).
+        return (
+            f'"""{desc}"""'
+            "\n\n"
+            "def run(input_value: str = \"\"):\n"
+            f'    """{ident} (offline template): echo the request."""\n'
+            "    return {\n"
+            f'        "skill": "{ident}",\n'
+            f'        "description": "{desc}",\n'
+            '        "input": input_value,\n'
+            '        "result": "OK",\n'
+            "    }\n"
+        )

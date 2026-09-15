@@ -1,396 +1,763 @@
 #!/usr/bin/env python3
-""""
-Skill Registry Module - Core Foundation Implementation
-""""
+"""
+Central Skill Registry - the single source of truth for all skills.
 
-import sqlite3
+Design rules (from PERSONAL_ASSISTANT_GUIDE.md):
+* Skills are ONLY accessible through this registry.  There is no
+  auto-discovery: nothing is imported from the filesystem unless it has been
+  registered here.
+* The registry is backed by SQLite (tables: ``skills``, ``skill_versions``,
+  ``skill_runs``, ``skill_fts``) and is Git-controlled: every mutation that
+  writes a skill file also records the resulting commit hash.
+* All skill types (function, agent, workflow) are handled uniformly.
+"""
+
+import hashlib
 import json
 import os
-import subprocess
-import shutil
-from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
+import re
+import sqlite3
+from typing import Any, Dict, List, Optional
+
+from .models import utcnow_iso
+from .git_manager import GitManager, GitManagerError
+
+DEFAULT_DB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "skills.db"
+)
+
 
 class RegistryError(Exception):
-    """Base exception for registry errors"""
+    """Base exception for registry errors."""
 
-    pass
+
 class SkillNotFoundError(RegistryError):
-    """Raised when a skill is not found"""
-    pass
+    """Raised when a skill is not found."""
+
 
 class SkillAlreadyExistsError(RegistryError):
-    """Raised when a skill already exists"""
-    pass
+    """Raised when registering a skill name that already exists."""
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS skills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL CHECK (type IN ('function', 'agent', 'workflow')),
+    code TEXT NOT NULL DEFAULT '',
+    parameters TEXT NOT NULL DEFAULT '{}',
+    examples TEXT NOT NULL DEFAULT '[]',
+    current_version INTEGER NOT NULL DEFAULT 1,
+    code_path TEXT,
+    git_commit TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    code TEXT NOT NULL DEFAULT '',
+    code_path TEXT,
+    code_hash TEXT,
+    git_commit TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (skill_name) REFERENCES skills (name) ON DELETE CASCADE,
+    UNIQUE (skill_name, version)
+);
+
+CREATE TABLE IF NOT EXISTS skill_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_name TEXT NOT NULL,
+    version INTEGER,
+    input_data TEXT NOT NULL DEFAULT '{}',
+    output TEXT,
+    success INTEGER NOT NULL DEFAULT 1,
+    error TEXT,
+    duration_ms REAL NOT NULL DEFAULT 0,
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (skill_name) REFERENCES skills (name) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_name ON skills (name);
+CREATE INDEX IF NOT EXISTS idx_skill_versions_name ON skill_versions (skill_name);
+CREATE INDEX IF NOT EXISTS idx_skill_runs_name ON skill_runs (skill_name);
+"""
+
 
 class SkillRegistry:
-    """
-    Central registry for managing skills with version history tracking
-    All skills MUST be accessed through this registry (no auto-discovery)
-    """
-    def __init__(self, db_path: str = "./skills/skills.db", git_repo_path: str = None):
+    """SQLite-backed, Git-controlled central skill registry."""
+
+    def __init__(
+        self,
+        db_path: str = DEFAULT_DB_PATH,
+        git_repo_path: Optional[str] = None,
+        auto_commit: bool = True,
+        versioned_skills_dir: Optional[str] = None,
+    ) -> None:
         self.db_path = db_path
-        self.git_repo_path = git_repo_path or os.path.dirname(db_path)
-        self._create_tables()
-        self._ensure_skills_dir()
+        self.git_repo_path = git_repo_path or os.path.dirname(os.path.abspath(db_path))
+        self.auto_commit = auto_commit
+        self._git: Optional[GitManager] = None
+        # Single, consistent directory for versioned skill files.  Both
+        # _persist_skill_file and _cleanup_old_versions operate on this path.
+        self.versioned_skills_dir = versioned_skills_dir or os.path.join(
+            os.path.dirname(os.path.abspath(db_path)), "versioned_skills"
+        )
+        self._fts_available = False
+        self._closed = False
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)) or ".", exist_ok=True)
+        self._init_db()
+
+    @property
+    def git(self) -> Optional[GitManager]:
+        """Lazy-initialized GitManager (None if the repo path is not a repo)."""
+        if self._git is None:
+            try:
+                self._git = GitManager(self.git_repo_path)
+            except GitManagerError:
+                self._git = None
+        return self._git
+
+    def close(self) -> None:
+        """Release registry resources.
+
+        Connections are opened per-operation and closed in ``finally`` blocks,
+        so there is no long-lived handle to shut down.  This drops the cached
+        :class:`GitManager` and marks the registry closed so callers (and test
+        fixtures) have a deterministic teardown hook.  Idempotent.
+        """
+        self._git = None
+        self._closed = True
+
+    def __enter__(self) -> "SkillRegistry":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-    def _create_tables(self):
-        conn.commit()
-        conn.close()
-    def _ensure_skills_dir(self):
-        if skills_dir and not os.path.exists(skills_dir):
-        skills_dir = os.path.dirname(self.db_path)
-            os.makedirs(skills_dir, exist_ok=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
 
-    def _calculate_file_hash(self, code: str) -> str:
-        import hashlib
-        return hashlib.md5(code.encode('utf-8')).hexdigest()
-    
-    def _get_skill_directory(self) -> str:
-        return os.path.dirname(self.db_path) or os.getcwd()
-    
-    def _save_skill_file(self, skill_name: str, code: str, version: int = None) -> str:
-        skills_dir = self._get_skill_directory()
-        version_dir = os.path.join(skills_dir, "versioned_skills")
-        os.makedirs(version_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{skill_name}_v{timestamp}.py"
-        filepath = os.path.join(version_dir, filename)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(code)
-        return filepath
-    
-    def _cleanup_old_versions(self, skill_name: str, keep_versions: int = 10):
-        import glob
-        skills_dir = self._get_skill_directory()
-        version_dir = os.path.join(skills_dir, "versioned_skills")
-        if not os.path.exists(version_dir):
-            return
-        pattern = os.path.join(version_dir, f"{skill_name}_v*.py")
-        version_files = sorted(glob.glob(pattern), key=lambda x: x, reverse=True)
-        for old_file in version_files[keep_versions:]:
-            if os.path.exists(old_file):
-                os.remove(old_file)
-
-    def add_skill(self, skill_data: Dict[str, Any], save_to_git: bool = True) -> Dict[str, Any]:
-        skill_name = skill_data.get('name')
-        if not skill_name:
-            raise RegistryError("Skill name is required")
-        current_time = datetime.now().isoformat()
-        existing = self.get_skill(skill_name)
-        if existing:
-            current_versions = json.loads(existing.get('versions', '[]'))
-            new_version = len(current_versions) + 1 if current_versions else 1
-        else:
-            new_version = 1
-            current_versions = []
-        saved_file_path = None
-        if save_to_git and skill_data.get('code'):
-            saved_file_path = self._save_skill_file(skill_name, skill_data['code'], new_version)
-            current_versions.append(saved_file_path)
-        if save_to_git:
-            self._cleanup_old_versions(skill_name)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO skills (name, description, type, code, parameters, examples, created_at, updated_at, versions, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (skill_name, skill_data.get('description', ''), skill_data.get('type', 'function'), skill_data.get('code', ''), json.dumps(skill_data.get('parameters', []), ensure_ascii=False), json.dumps(skill_data.get('examples', []), ensure_ascii=False), skill_data.get('created_at', current_time), current_time, json.dumps(current_versions, ensure_ascii=False), 1))
-        conn.commit()
-        conn.close()
-        return self.get_skill(skill_name)
-
-    def get_skill(self, name: str) -> Optional[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name, description, type, code, parameters, examples, created_at, updated_at, versions, is_active FROM skills WHERE name = ? AND is_active = 1", (name,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return {
-                'name': row[0], 'description': row[1], 'type': row[2],
-                'code': row[3], 'parameters': json.loads(row[4] if row[4] else '[]'),
-                'examples': json.loads(row[5] if row[5] else '[]'),
-                'created_at': row[6], 'updated_at': row[7],
-                'versions': json.loads(row[8] if row[8] else '[]'),
-                'is_active': row[9]
-            }
-        return None
-
-    def search_skills(self, query: str, skill_type: str = None, max_results: int = 10) -> List[Dict[str, Any]]:
-        return self.list_skills(skill_type=skill_type, search_query=query, limit=max_results, offset=0, active_only=True)
-    
-    def get_skill_versions(self, name: str) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT skill_name, filename, created_at FROM versions WHERE skill_name = ? ORDER BY created_at DESC", (name,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [{'skill_name': row[0], 'filename': row[1], 'created_at': row[2]} for row in rows]
-    
-    def get_skill_history(self, name: str) -> List[Dict[str, Any]]:
-        skill = self.get_skill(name)
-        if not skill:
-            return []
-        versions = self.get_skill_versions(name)
-        return {
-            'name': name, 'versions': versions,
-            'current_parameters': skill.get('parameters', []),
-            'current_code': skill.get('code', ''),
-            'created_at': skill.get('created_at'),
-            'updated_at': skill.get('updated_at')
-        }
-
-    def update_skill(self, name: str, skill_data: Dict[str, Any]) -> Dict[str, Any]:
-        if not self.get_skill(name):
-            raise SkillNotFoundError(f"Skill '{name}' not found")
-        if skill_data.get('code'):
-            saved_file_path = self._save_skill_file(name, skill_data['code'])
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO versions (skill_name, filename, created_at) VALUES (?, ?, ?)", (name, saved_file_path, datetime.now().isoformat()))
+    def _init_db(self) -> None:
+        conn = self._connect()
+        try:
+            conn.executescript(_SCHEMA)
+            self._fts_available = self._setup_fts(conn)
             conn.commit()
+        finally:
             conn.close()
-        return self.add_skill(skill_data, save_to_git=True)
-    
-    def delete_skill(self, name: str) -> bool:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM skills WHERE name = ?", (name,))
-        cursor.execute("DELETE FROM skill_parameters WHERE skill_name = ?", (name,))
-        cursor.execute("DELETE FROM skill_examples WHERE skill_name = ?", (name,))
-        rows = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return rows > 0
 
-    def restore_skill(self, name: str, version_path: str) -> bool:
-        if not os.path.exists(version_path):
-            return False
-        with open(version_path, 'r', encoding='utf-8') as f:
-            code = f.read()
-        skill = self.get_skill(name)
-        parameters = skill.get('parameters', []) if skill else []
-        skill_data = {
-            'name': name,
-            'description': f"Restored from version: {os.path.basename(version_path)}",
-            'type': 'function', 'code': code,
-            'parameters': parameters,
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat()
-        }
-        self.add_skill(skill_data, save_to_git=False)
-        return True
-    
-    def validate_skill(self, skill_data: Dict[str, Any]) -> tuple:
-        errors = []
-        if not skill_data.get('name'):
-            errors.append("Skill name is required")
-        if not skill_data.get('code'):
-            errors.append("Skill code is required")
-        skill_type = skill_data.get('type', 'function')
-        if skill_type not in ['function', 'agent', 'workflow']:
-            errors.append(f"Invalid skill type: {skill_type}")
-        if skill_data.get('parameters'):
-            for i, param in enumerate(skill_data['parameters']):
-                if not param.get('name'):
-                    errors.append(f"Parameter at index {i} missing 'name' field")
-                if 'type' not in param:
-                    errors.append(f"Parameter '{param.get('name', 'unnamed')}' missing 'type' field")
-        return len(errors) == 0, errors
-    
-    def count_skills(self, skill_type: str = None) -> int:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        if skill_type:
-            cursor.execute("SELECT COUNT(*) FROM skills WHERE type = ? AND is_active = 1", (skill_type,))
-        else:
-            cursor.execute("SELECT COUNT(*) FROM skills WHERE is_active = 1")
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count
-
-    def get_statistics(self) -> Dict[str, Any]:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM skills WHERE is_active = 1")
-        total_skills = cursor.fetchone()[0]
-        cursor.execute("SELECT type, COUNT(*) FROM skills WHERE is_active = 1 GROUP BY type")
-        skills_by_type = {row[0]: row[1] for row in cursor.fetchall()}
-        cursor.execute("SELECT name, type, created_at FROM skills WHERE is_active = 1 ORDER BY created_at DESC LIMIT 5")
-        latest_skills = [{'name': row[0], 'type': row[1], 'created_at': row[2]} for row in cursor.fetchall()]
-        conn.close()
-        return {
-            'total_skills': total_skills, 'skills_by_type': skills_by_type,
-            'latest_skills': latest_skills
-        }
-    
-    def clear_all_skills(self) -> int:
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM skills")
-        cursor.execute("DELETE FROM skill_parameters")
-        cursor.execute("DELETE FROM skill_examples")
-        rows = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return rows
-    
-    def reset_registry(self) -> bool:
+    @staticmethod
+    def _setup_fts(conn: sqlite3.Connection) -> bool:
         try:
-            if os.path.exists(self.db_path):
-                backup_path = f"{self.db_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                shutil.copy2(self.db_path, backup_path)
-            if os.path.exists(self.db_path):
-                os.remove(self.db_path)
-            self._create_tables()
-            self._ensure_skills_dir()
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS skill_fts
+                USING fts5(name, description, content='skills', content_rowid='id')
+                """
+            )
             return True
-        except Exception as e:
-            raise RegistryError(f"Failed to reset registry: {e}")
+        except sqlite3.OperationalError:
+            return False
 
-
-
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] == 'init':
-        registry = SkillRegistry()
-        return
-    registry = SkillRegistry()
-    print("Registry module loaded. Use SkillRegistry class directly.")
-
-if __name__ == "__main__":
-    import sys
-    main()
-
-class NewSkillRegistry:
-    """Simplified registry used for tests and core functionality."""
-    def __init__(self, db_path: str = "./skills/skills.db", git_repo_path: Optional[str] = None):
-        self.db_path = os.path.abspath(db_path)
-        self.git_repo_path = os.path.abspath(git_repo_path or os.path.dirname(self.db_path))
-        self._ensure_skills_dir()
-        self._create_tables()
-
-    def _ensure_skills_dir(self) -> None:
-        skills_dir = os.path.dirname(self.db_path)
-        os.makedirs(skills_dir, exist_ok=True)
-        git_dir = os.path.join(self.git_repo_path, ".git")
-        if not os.path.isdir(git_dir):
-            subprocess.run(["git", "init", self.git_repo_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    def _create_tables(self) -> None:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS skills (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                code_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1
-            );
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS skill_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                skill_name TEXT NOT NULL,
-                version TEXT NOT NULL,
-                code_path TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-        """)
-        conn.commit()
-        conn.close()
-
-    def _git_commit(self, file_path: str, message: str) -> None:
-        rel_path = os.path.relpath(file_path, self.git_repo_path)
+    def _sync_fts(self, conn: sqlite3.Connection) -> None:
+        if not self._fts_available:
+            return
         try:
-            subprocess.run(["git", "add", rel_path], cwd=self.git_repo_path, check=True)
-            subprocess.run(["git", "commit", "-m", message], cwd=self.git_repo_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            # Git may not be available or commit may fail; ignore
+            conn.execute("INSERT INTO skill_fts(skill_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
             pass
 
-    def _add_version(self, skill_name: str, version: str, code_path: str) -> None:
-        now = datetime.utcnow().isoformat()
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("INSERT INTO skill_versions (skill_name, version, code_path, created_at) VALUES (?,?,?,?)", (skill_name, version, code_path, now))
-        conn.commit()
-        conn.close()
+    # ------------------------------------------------------------------
+    # CRUD
+    # ------------------------------------------------------------------
 
-    def add_skill(self, name: str, skill_type: str, code_path: str, version: Optional[str] = None) -> Dict[str, Any]:
-        if self.get_skill(name):
-            raise RegistryError(f"Skill '{name}' already exists")
-        now = datetime.utcnow().isoformat()
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("INSERT INTO skills (name, type, code_path, created_at, updated_at, active) VALUES (?,?,?,?,?,1)", (name, skill_type, code_path, now, now))
-        conn.commit()
-        conn.close()
-        if version is None:
-            version = "1.0"
-        self._add_version(name, version, code_path)
-        self._git_commit(code_path, f"Add skill {name} version {version}")
+    def register_skill(
+        self,
+        name: str,
+        skill_type: str = "function",
+        description: str = "",
+        code: str = "",
+        parameters: Optional[Dict[str, Any]] = None,
+        examples: Optional[List[Dict[str, Any]]] = None,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """Register a brand-new skill (v1).
+
+        Raises SkillAlreadyExistsError if the name is already taken and
+        RegistryError when the skill is invalid.
+        """
+        validation = self.validate_skill(
+            {"name": name, "type": skill_type, "code": code}
+        )
+        if not validation["valid"]:
+            raise RegistryError(
+                f"Invalid skill: {'; '.join(validation['errors'])}"
+            )
+        now = utcnow_iso()
+        conn = self._connect()
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM skills WHERE name = ?", (name,)
+            ).fetchone()
+            if exists:
+                raise SkillAlreadyExistsError(f"Skill '{name}' already exists")
+            conn.execute(
+                """
+                INSERT INTO skills (name, description, type, code, parameters,
+                                    examples, current_version, code_path,
+                                    git_commit, active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 1, ?, ?)
+                """,
+                (
+                    name,
+                    description,
+                    skill_type,
+                    code,
+                    json.dumps(parameters or {}),
+                    json.dumps(examples or []),
+                    now,
+                    now,
+                ),
+            )
+            self._insert_version(conn, name, 1, code, note or "initial version")
+            self._sync_fts(conn)
+            conn.commit()
+        finally:
+            conn.close()
+
+        code_path = self._persist_skill_file(name, code, 1)
+        git_commit = self._commit_skill_files(name, "initial version", code_path)
+        self._store_file_and_commit(name, 1, code_path, git_commit)
         return self.get_skill(name)
 
-    def get_skill(self, name: str) -> Optional[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT name, type, code_path, created_at, updated_at, active FROM skills WHERE name=? AND active=1", (name,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return {
-                "name": row[0],
-                "type": row[1],
-                "code_path": row[2],
-                "created_at": row[3],
-                "updated_at": row[4],
-                "active": bool(row[5]),
-            }
-        return None
+    def update_skill(
+        self,
+        name: str,
+        code: Optional[str] = None,
+        description: Optional[str] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        examples: Optional[List[Dict[str, Any]]] = None,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """Update an existing skill, bumping its version (new history row)."""
+        existing = self.get_skill(name)
+        if existing is None:
+            raise SkillNotFoundError(f"Skill '{name}' not found")
 
-    def list_skills(self) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT name, type, code_path FROM skills WHERE active=1")
-        rows = c.fetchall()
-        conn.close()
-        return [{"name": r[0], "type": r[1], "code_path": r[2]} for r in rows]
+        new_code = code if code is not None else existing.get("code", "")
+        new_description = (
+            description if description is not None else existing.get("description", "")
+        )
+        new_parameters = (
+            parameters if parameters is not None else existing.get("parameters", {})
+        )
+        new_examples = (
+            examples if examples is not None else existing.get("examples", [])
+        )
+        new_version = existing["current_version"] + 1
 
-    def update_skill(self, name: str, new_code_path: str, version: Optional[str] = None) -> Dict[str, Any]:
-        skill = self.get_skill(name)
-        if not skill:
-            raise RegistryError(f"Skill '{name}' not found")
-        now = datetime.utcnow().isoformat()
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("UPDATE skills SET code_path=?, updated_at=? WHERE name=?", (new_code_path, now, name))
-        conn.commit()
-        conn.close()
-        if version is None:
-            version = "1.0"
-        self._add_version(name, version, new_code_path)
-        self._git_commit(new_code_path, f"Update skill {name} version {version}")
+        conn = self._connect()
+        try:
+            now = utcnow_iso()
+            conn.execute(
+                """
+                UPDATE skills
+                SET description = ?, code = ?, parameters = ?, examples = ?,
+                    current_version = ?, updated_at = ?
+                WHERE name = ?
+                """,
+                (
+                    new_description,
+                    new_code,
+                    json.dumps(new_parameters),
+                    json.dumps(new_examples),
+                    new_version,
+                    now,
+                    name,
+                ),
+            )
+            self._insert_version(conn, name, new_version, new_code, note)
+            self._sync_fts(conn)
+            conn.commit()
+        finally:
+            conn.close()
+
+        code_path = self._persist_skill_file(name, new_code, new_version)
+        git_commit = self._commit_skill_files(name, f"v{new_version}", code_path)
+        self._store_file_and_commit(name, new_version, code_path, git_commit)
         return self.get_skill(name)
 
     def delete_skill(self, name: str) -> None:
-        if not self.get_skill(name):
-            raise RegistryError(f"Skill '{name}' not found")
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("DELETE FROM skills WHERE name=?", (name,))
-        conn.commit()
-        conn.close()
+        """Soft-delete: mark the skill inactive (history is preserved)."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM skills WHERE name = ?", (name,)
+            ).fetchone()
+            if row is None:
+                raise SkillNotFoundError(f"Skill '{name}' not found")
+            conn.execute(
+                "UPDATE skills SET active = 0, updated_at = ? WHERE name = ?",
+                (utcnow_iso(), name),
+            )
+            self._sync_fts(conn)
+            conn.commit()
+        finally:
+            conn.close()
 
-    def get_versions(self, name: str) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("SELECT version, code_path, created_at FROM skill_versions WHERE skill_name=? ORDER BY created_at DESC", (name,))
-        rows = c.fetchall()
-        conn.close()
-        return [{"version": r[0], "code_path": r[1], "created_at": r[2]} for r in rows]
+    def activate_skill(self, name: str) -> Dict[str, Any]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM skills WHERE name = ?", (name,)
+            ).fetchone()
+            if row is None:
+                raise SkillNotFoundError(f"Skill '{name}' not found")
+            conn.execute(
+                "UPDATE skills SET active = 1, updated_at = ? WHERE name = ?",
+                (utcnow_iso(), name),
+            )
+            self._sync_fts(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        return self.get_skill(name)
 
-# Alias to maintain backward compatibility
-SkillRegistry = NewSkillRegistry
+    # ------------------------------------------------------------------
+    # Reads
+    # ------------------------------------------------------------------
 
+    def get_skill(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return the active skill dict for ``name`` or None."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT name, description, type, code, parameters, examples,
+                       current_version, code_path, git_commit, active,
+                       created_at, updated_at
+                FROM skills WHERE name = ? AND active = 1
+                """,
+                (name,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        return self._row_to_skill(row)
+
+    def list_skills(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
+        where = "" if include_inactive else "WHERE active = 1"
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT name, description, type, code, parameters, examples,
+                       current_version, code_path, git_commit, active,
+                       created_at, updated_at
+                FROM skills {where} ORDER BY name
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+        return [self._row_to_skill(r) for r in rows]
+
+    def get_version(self, name: str, version: int) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT skill_name, version, code, code_path, code_hash,
+                       git_commit, note, created_at
+                FROM skill_versions
+                WHERE skill_name = ? AND version = ?
+                """,
+                (name, version),
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row is not None else None
+
+    def get_version_history(self, name: str) -> List[Dict[str, Any]]:
+        """Full version history for a skill, newest first."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT skill_name, version, code, code_path, code_hash,
+                       git_commit, note, created_at
+                FROM skill_versions
+                WHERE skill_name = ?
+                ORDER BY version DESC
+                """,
+                (name,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
+    def rollback_to_version(self, name: str, version: int) -> Dict[str, Any]:
+        """Restore an older version as a NEW version (history preserved)."""
+        old = self.get_version(name, version)
+        if old is None:
+            raise SkillNotFoundError(
+                f"Version {version} of skill '{name}' not found"
+            )
+        return self.update_skill(name, code=old["code"], note=f"rollback to v{version}")
+
+    def diff_versions(self, name: str, v1: int, v2: int) -> Dict[str, Any]:
+        """Return a unified diff between two versions of a skill."""
+        import difflib
+
+        row1 = self.get_version(name, v1)
+        row2 = self.get_version(name, v2)
+        if row1 is None or row2 is None:
+            raise SkillNotFoundError(f"Version(s) {v1}/{v2} of '{name}' not found")
+        diff = "".join(
+            difflib.unified_diff(
+                row1["code"].splitlines(keepends=True),
+                row2["code"].splitlines(keepends=True),
+                fromfile=f"{name} v{v1}",
+                tofile=f"{name} v{v2}",
+            )
+        )
+        return {"v1": row1, "v2": row2, "diff": diff}
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def search_skills(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Full-text search with LIKE fallback."""
+        query = (query or "").strip()
+        if not query:
+            return self.list_skills()
+        conn = self._connect()
+        try:
+            if self._fts_available:
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT s.name, s.description, s.type, s.current_version
+                        FROM skill_fts f
+                        JOIN skills s ON s.id = f.rowid
+                        WHERE skill_fts MATCH ? AND s.active = 1
+                        ORDER BY rank
+                        LIMIT ?
+                        """,
+                        (self._fts_query(query), limit),
+                    ).fetchall()
+                    if rows:
+                        return [
+                            {
+                                "name": r["name"],
+                                "description": r["description"],
+                                "type": r["type"],
+                                "current_version": r["current_version"],
+                                "score": None,
+                            }
+                            for r in rows
+                        ]
+                except sqlite3.OperationalError:
+                    pass
+            like = f"%{query}%"
+            rows = conn.execute(
+                """
+                SELECT name, description, type, current_version
+                FROM skills
+                WHERE active = 1 AND (name LIKE ? OR description LIKE ?)
+                LIMIT ?
+                """,
+                (like, like, limit),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) | {"score": None} for r in rows]
+
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        # Quote each token so FTS5 treats them as phrases (avoids syntax errors).
+        return " OR ".join(
+            '"' + tok.replace('"', '""') + '"' for tok in query.split() if tok
+        )
+
+    # ------------------------------------------------------------------
+    # Run logging
+    # ------------------------------------------------------------------
+
+    def log_skill_run(
+        self,
+        name: str,
+        input_data: Dict[str, Any],
+        output: Any,
+        success: bool = True,
+        error: Optional[str] = None,
+        duration_ms: float = 0.0,
+        version: Optional[int] = None,
+    ) -> int:
+        """Log one execution of a skill; returns the run id."""
+        if version is None:
+            skill = self.get_skill(name)
+            version = (skill or {}).get("current_version")
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO skill_runs (skill_name, version, input_data, output,
+                                        success, error, duration_ms, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    version,
+                    json.dumps(input_data, default=str),
+                    json.dumps(output, default=str),
+                    1 if success else 0,
+                    error,
+                    duration_ms,
+                    utcnow_iso(),
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Validation / export / import
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def validate_skill(skill: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate a skill dict; returns {"valid": bool, "errors": [...]}.
+
+        A valid skill has: a non-empty name, a known type, and code that
+        contains at least one top-level function definition.
+        """
+        errors: List[str] = []
+        name = str(skill.get("name", "")).strip()
+        if not name:
+            errors.append("name is required")
+        elif not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", name):
+            errors.append("name must be alphanumeric (with - or _)")
+        skill_type = skill.get("type") or skill.get("skill_type")
+        if skill_type not in ("function", "agent", "workflow"):
+            errors.append(f"invalid type: {skill_type!r}")
+        code = skill.get("code", "")
+        if not code.strip():
+            errors.append("code is empty")
+        elif not re.search(r"^def\s+[A-Za-z_]\w*\s*\(", code, re.MULTILINE):
+            errors.append("code contains no function definition")
+        return {"valid": not errors, "errors": errors}
+
+    def export_skill(self, name: str) -> Dict[str, Any]:
+        """Export a skill as a portable payload (dict / JSON-serializable)."""
+        skill = self.get_skill(name)
+        if skill is None:
+            raise SkillNotFoundError(f"Skill '{name}' not found")
+        return {
+            "name": skill["name"],
+            "description": skill["description"],
+            "type": skill["type"],
+            "code": skill["code"],
+            "parameters": skill["parameters"],
+            "examples": skill["examples"],
+            "version": skill["current_version"],
+        }
+
+    def import_skill(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Import a skill from an exported payload.
+
+        If the name exists it is updated (new version); otherwise it is
+        registered fresh.
+        """
+        payload = dict(payload)
+        name = payload.pop("name", None)
+        if not name:
+            raise RegistryError("import payload requires a 'name'")
+        skill_type = payload.pop("type", "function")
+        code = payload.pop("code", "")
+        description = payload.pop("description", "")
+        parameters = payload.pop("parameters", {})
+        examples = payload.pop("examples", [])
+        payload.pop("version", None)
+        if self.get_skill(name):
+            return self.update_skill(
+                name,
+                code=code,
+                description=description,
+                parameters=parameters,
+                examples=examples,
+                note="imported",
+            )
+        return self.register_skill(
+            name,
+            skill_type=skill_type,
+            description=description,
+            code=code,
+            parameters=parameters,
+            examples=examples,
+            note="imported",
+        )
+
+    # ------------------------------------------------------------------
+    # Persistence / Git helpers
+    # ------------------------------------------------------------------
+
+    def _store_file_and_commit(
+        self,
+        name: str,
+        version: int,
+        code_path: Optional[str],
+        git_commit: Optional[str],
+    ) -> None:
+        """Persist code_path + git commit hash into skills and skill_versions."""
+        conn = self._connect()
+        try:
+            conn.execute(
+                "UPDATE skills SET code_path = ?, git_commit = ? WHERE name = ?",
+                (code_path, git_commit, name),
+            )
+            conn.execute(
+                """
+                UPDATE skill_versions
+                SET code_path = ?, git_commit = ?
+                WHERE skill_name = ? AND version = ?
+                """,
+                (code_path, git_commit, name, version),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _commit_skill_files(
+        self, name: str, note: str, code_path: Optional[str]
+    ) -> Optional[str]:
+        """Stage + commit the skill file; returns the new commit hash."""
+        if not self.auto_commit:
+            return None
+        manager = self.git
+        if manager is None or not code_path:
+            return None
+        try:
+            if manager.add([code_path]):
+                if manager.commit(f"feat(skills): {name} {note}"):
+                    log = manager.log(limit=1)
+                    return log[0]["hash"] if log else None
+        except GitManagerError:
+            return None
+        return None
+
+    def get_skill_runs(self, name: str, limit: int = 20) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, skill_name, version, input_data, output, success,
+                       error, duration_ms, timestamp
+                FROM skill_runs
+                WHERE skill_name = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (name, limit),
+            ).fetchall()
+        finally:
+            conn.close()
+        result = []
+        for r in rows:
+            d = dict(r)
+            for key in ("input_data", "output"):
+                if isinstance(d.get(key), str):
+                    try:
+                        d[key] = json.loads(d[key])
+                    except (ValueError, TypeError):
+                        pass
+            d["success"] = bool(d["success"])
+            result.append(d)
+        return result
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_skill(row: sqlite3.Row) -> Dict[str, Any]:
+        skill = {k: row[k] for k in row.keys()}
+        for key in ("parameters", "examples"):
+            if isinstance(skill.get(key), str):
+                try:
+                    skill[key] = json.loads(skill[key])
+                except (ValueError, TypeError):
+                    pass
+        skill["skill_type"] = skill.get("type")
+        skill["version"] = skill.get("current_version")
+        skill["active"] = bool(skill.get("active"))
+        return skill
+
+    def _insert_version(
+        self,
+        conn: sqlite3.Connection,
+        name: str,
+        version: int,
+        code: str,
+        note: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO skill_versions (skill_name, version, code, code_path,
+                                        code_hash, git_commit, note, created_at)
+            VALUES (?, ?, ?, NULL, ?, NULL, ?, ?)
+            """,
+            (name, version, code, _sha256(code), note, utcnow_iso()),
+        )
+
+    def _persist_skill_file(self, name: str, code: str, version: int) -> str:
+        """Write the skill code into ``versioned_skills_dir``."""
+        version_dir = self.versioned_skills_dir
+        os.makedirs(version_dir, exist_ok=True)
+        filepath = os.path.join(version_dir, f"{name}_v{version}.py")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(code)
+        self._cleanup_old_versions(name)
+        return filepath
+
+    def _cleanup_old_versions(self, name: str, keep: int = 10) -> None:
+        """Prune per-skill version files in ``versioned_skills_dir``, keeping
+        only the latest ``keep``.
+
+        Uses the exact same directory as :meth:`_persist_skill_file` so files
+        are always created and pruned in the same location.
+        """
+        import glob
+
+        version_dir = self.versioned_skills_dir
+        if not os.path.isdir(version_dir):
+            return
+
+        def sort_key(path: str) -> int:
+            match = re.search(r"v(\d+)\.py$", path)
+            return int(match.group(1)) if match else 0
+
+        files = sorted(
+            glob.glob(os.path.join(version_dir, f"{name}_v*.py")),
+            key=sort_key,
+            reverse=True,
+        )
+        for old in files[keep:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass

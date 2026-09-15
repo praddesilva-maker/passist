@@ -1,191 +1,153 @@
 #!/usr/bin/env python3
-"""
-Git Manager Module - Handles Git operations for version control
+"""Git operations for skill file version control with graceful fallback.
+
+:class:`GitManager` wraps ``git`` CLI operations.  It degrades gracefully:
+if the target path is not a Git repository (or ``git`` is missing), all
+operations simply report failure / empty state instead of raising, so the
+rest of the system keeps working.  :class:`GitManagerError` is only raised
+when a git command that *should* succeed fails on a real repository.
 """
 
-import subprocess
 import os
-from typing import Dict, List, Optional, Tuple
+import subprocess
+from typing import Any, Dict, List, Optional
 
 
 class GitManagerError(Exception):
-    """Base exception for Git manager errors"""
-    pass
+    """Raised when a git operation fails inside a real repository."""
+
+
+def _run_git(repo_path: str, args: List[str]) -> bool:
+    """Run ``git -C repo_path *args`` and return True on success."""
+    if not repo_path or not os.path.isdir(repo_path):
+        return False
+    try:
+        completed = subprocess.run(
+            ["git", "-C", repo_path, *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+    return completed.returncode == 0
 
 
 class GitManager:
-    """Manages Git operations for version control"""
+    """Thin, defensive wrapper around the git CLI for one repository path."""
 
-    def __init__(self, repo_path: str):
+    def __init__(self, repo_path: str) -> None:
         self.repo_path = repo_path
+        self.is_repo = False
+        self.auto_commit = False
         self._check_repo()
-    
-    def _check_repo(self):
-        """Check if path is a valid Git repository"""
-        if not os.path.exists(self.repo_path):
-            raise GitManagerError(f"Repository path does not exist: {self.repo_path}")
-        if not os.path.isdir(self.repo_path):
-            raise GitManagerError(f"Repository path is not a directory: {self.repo_path}")
-        result = self._run_git(['rev-parse', '--git-dir'], check=False)
-        if result.returncode != 0:
-            raise GitManagerError(f"Not a Git repository: {self.repo_path}")
-    
-    def _run_git(self, args: List[str], check: bool = True) -> subprocess.CompletedProcess:
-        """Run a Git command"""
-        result = subprocess.run(
-            ['git'] + args,
-            cwd=self.repo_path,
-            capture_output=True,
-            text=True,
-            check=check
-        )
-        return result
-    
-    def init(self) -> bool:
-        """Initialize a new Git repository"""
+
+    # ------------------------------------------------------------------
+    # Repo detection
+    # ------------------------------------------------------------------
+
+    def _check_repo(self) -> None:
+        if not self.repo_path or not _run_git(self.repo_path, ["rev-parse", "--is-inside-work-tree"]):
+            print(f"[git-manager] {self.repo_path!r} is not a git repo; auto-commit disabled")
+            return
+        self.is_repo = True
+        self.auto_commit = True
+
+    def _git(self, *args: str, allow_fail: bool = False) -> Optional[str]:
+        """Run a git command; returns stdout or None. Raises GitManagerError on
+        hard failures when allow_fail is False."""
         try:
-            result = self._run_git(['init'], check=False)
-            if result.returncode == 0:
-                self._add_and_commit('.', 'Initial commit')
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def add(self, files: List[str] = None) -> bool:
-        """Add files to Git staging"""
-        try:
-            if files:
-                args = ['add'] + files
-            else:
-                args = ['add', '.']
-            result = self._run_git(args)
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def commit(self, message: str) -> bool:
-        """Commit staged changes with a message"""
-        try:
-            result = self._run_git(['commit', '-m', message])
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def _add_and_commit(self, path: str, message: str):
-        """Add and commit all changes"""
-        self.add([path])
-        self.commit(message)
-    
-    def status(self) -> Dict[str, str]:
-        """Get repository status"""
-        try:
-            result = self._run_git(['status'])
-            return {
-                'output': result.stdout,
-                'error': result.stderr,
-                'success': result.returncode == 0
-            }
-        except GitManagerError:
-            return {'output': '', 'error': '', 'success': False}
-    
-    def log(self, limit: int = 10) -> List[Dict[str, str]]:
-        """Get recent commit log"""
-        try:
-            result = self._run_git(['log', '-n', str(limit), '--pretty=format:%H|%an|%ae|%ad|%s'])
-            entries = []
-            for line in result.stdout.splitlines():
-                parts = line.split('|')
-                if len(parts) >= 5:
-                    entries.append({
-                        'hash': parts[0][:7],
-                        'author': parts[1],
-                        'email': parts[2],
-                        'date': parts[3],
-                        'message': parts[4]
-                    })
-            return entries
-        except GitManagerError:
-            return []
-    
-    def diff(self, branch: str = 'HEAD') -> Dict[str, str]:
-        """Get diff between current and branch"""
-        try:
-            result = self._run_git(['diff', branch])
-            return {
-                'output': result.stdout,
-                'error': result.stderr,
-                'success': result.returncode == 0
-            }
-        except GitManagerError:
-            return {'output': '', 'error': '', 'success': False}
-    
-    def show(self, commit_hash: str) -> Dict[str, str]:
-        """Show file contents at a commit"""
-        try:
-            result = self._run_git(['show', commit_hash])
-            return {
-                'output': result.stdout,
-                'error': result.stderr,
-                'success': result.returncode == 0
-            }
-        except GitManagerError:
-            return {'output': '', 'error': '', 'success': False}
-    
-    def branch(self) -> List[str]:
-        """Get list of branches"""
-        try:
-            result = self._run_git(['branch'])
-            branches = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-            return branches
-        except GitManagerError:
-            return []
-    
-    def checkout(self, branch: str) -> bool:
-        """Checkout a branch"""
-        try:
-            result = self._run_git(['checkout', branch])
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def current_branch(self) -> Optional[str]:
-        """Get current branch name"""
-        try:
-            result = self._run_git(['branch', '--show-current'])
-            return result.stdout.strip() if result.stdout.strip() else None
-        except GitManagerError:
-            return None
-    
-    def pull(self, remote: str = 'origin', branch: str = None) -> bool:
-        """Pull changes from remote"""
-        try:
-            args = ['pull']
-            if branch:
-                args.extend([remote, branch])
-            result = self._run_git(args)
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def push(self, remote: str = 'origin', branch: str = None) -> bool:
-        """Push changes to remote"""
-        try:
-            args = ['push']
-            if branch:
-                args.extend([remote, branch])
-            result = self._run_git(args)
-            return result.returncode == 0
-        except GitManagerError:
-            return False
-    
-    def clone(self, url: str, to_path: str) -> bool:
-        """Clone a repository from URL"""
-        try:
-            result = subprocess.run(
-                ['git', 'clone', url, to_path],
+            completed = subprocess.run(
+                ["git", "-C", self.repo_path, *args],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=30,
             )
-            return result.returncode == 0
+        except FileNotFoundError as exc:
+            raise GitManagerError("git executable not found") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise GitManagerError(f"git {' '.join(args)} timed out") from exc
+        if completed.returncode != 0 and not allow_fail:
+            raise GitManagerError(
+                f"git {' '.join(args)} failed: {completed.stderr.strip()}"
+            )
+        return completed.stdout.strip()
+
+    # ------------------------------------------------------------------
+    # Operations (all no-ops outside a repo)
+    # ------------------------------------------------------------------
+
+    def add(self, paths: List[str]) -> bool:
+        """Stage the given absolute paths (git resolves work-tree-relative)."""
+        if not self.is_repo or not paths:
+            return False
+        try:
+            self._git(*["add", "--", *paths])
+            return True
+        except GitManagerError:
+            return False
+
+    def commit(self, message: str) -> bool:
+        """Commit staged changes. Returns False when there is nothing to commit."""
+        if not self.is_repo:
+            return False
+        try:
+            if not self.status()["changes"] and not self.status()["untracked"]:
+                return False
+            self._git("commit", "-m", message)
+            return True
+        except GitManagerError:
+            return False
+
+    def status(self) -> Dict[str, Any]:
+        if not self.is_repo:
+            return {"repo": False, "clean": None, "changes": [], "untracked": []}
+        try:
+            out = self._git("status", "--porcelain") or ""
+        except GitManagerError:
+            return {"repo": True, "clean": None, "changes": [], "untracked": []}
+        changes: List[str] = []
+        untracked: List[str] = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            if line.startswith("??"):
+                untracked.append(line[3:].strip())
+            else:
+                changes.append(line[3:].strip())
+        return {"repo": True, "clean": not changes and not untracked,
+                "changes": changes, "untracked": untracked}
+
+    def log(self, n: Optional[int] = None, limit: Optional[int] = None) -> List[Dict[str, str]]:
+        """Return the most recent commits (newest first) as dicts."""
+        if not self.is_repo:
+            return []
+        count = limit if limit is not None else (n or 10)
+        try:
+            out = self._git("log", f"--max-count={count}",
+                            "--format=%H|%h|%an|%s", allow_fail=True) or ""
+        except GitManagerError:
+            return []
+        commits: List[Dict[str, str]] = []
+        for line in out.splitlines():
+            parts = line.split("|", 3)
+            if len(parts) != 4:
+                continue
+            full_hash, short_hash, author, message = parts
+            commits.append({"hash": full_hash, "short_hash": short_hash,
+                            "author": author, "message": message})
+        return commits
+
+    def init(self, default_branch: Optional[str] = None) -> bool:
+        """Initialize the path as a git repository (best effort)."""
+        if self.is_repo:
+            return True
+        cmd = ["init"]
+        if default_branch:
+            cmd += ["-b", default_branch]
+        try:
+            _run_git(self.repo_path, cmd)
         except Exception:
             return False
+        self._check_repo()
+        return self.is_repo

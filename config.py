@@ -1,96 +1,107 @@
 #!/usr/bin/env python3
 """
-Personal Assistant Agentic System Configuration
-Configuration file for the Personal Assistant agent system
+Personal Assistant Agentic System - Configuration.
+
+Environment variables (all optional; sane defaults are applied):
+    GLM_API_KEY      - API key for the GLM (Zhipu) / Qwen-compatible API
+    GLM_BASE_URL     - OpenAI-compatible base URL (default: GLM 4.0 endpoint)
+    GLM_MODEL        - model name (default: glm-4)
+    SKILLS_DB_PATH   - path to the SQLite skill registry database
+    GIT_REPO_PATH    - path of the git repository backing the registry
+    USE_OFFLINE_MODEL - "1" forces the offline (no-network) model
 """
 
 import os
+from dataclasses import dataclass, field
 from typing import Optional
-from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-class GLMConfig(BaseModel):
-    """Configuration for GLM (Qwen 30B) model integration"""
-    model_name: str = Field(default="glm-4", description="GLM model name")
-    api_key: str = Field(default="", description="GLM API key")
-    base_url: str = Field(
-        default="https://open.bigmodel.cn/api/paas/v4",
-        description="GLM API base URL"
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for the chat model (GLM 4 / Qwen 30B via OpenAI-compatible API)."""
+
+    provider: str = field(default_factory=lambda: os.getenv("GLM_PROVIDER", "glm"))
+    model_name: str = field(default_factory=lambda: os.getenv("GLM_MODEL", "glm-4"))
+    api_key: str = field(default_factory=lambda: os.getenv("GLM_API_KEY", ""))
+    base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"
+        )
     )
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2048, ge=1, le=8192)
+    temperature: float = field(default_factory=lambda: float(os.getenv("GLM_TEMPERATURE", "0.7")))
+    max_tokens: int = field(default_factory=lambda: int(os.getenv("GLM_MAX_TOKENS", "2048")))
+    use_offline: bool = field(default_factory=lambda: _env_bool("USE_OFFLINE_MODEL", False))
+
+    @property
+    def has_credentials(self) -> bool:
+        return bool(self.api_key)
 
 
-class DatabaseConfig(BaseModel):
-    """Configuration for SQLite database"""
-    db_path: str = Field(
-        default="./skills/skills.db",
-        description="Path to SQLite database file"
+@dataclass
+class DatabaseConfig:
+    """Configuration for the SQLite skill registry."""
+
+    db_path: str = field(default_factory=lambda: os.getenv("SKILLS_DB_PATH", "./skills/skills.db"))
+    enable_version_history: bool = True
+
+
+@dataclass
+class GitConfig:
+    """Configuration for Git integration."""
+
+    repo_path: str = field(
+        default_factory=lambda: os.getenv(
+            "GIT_REPO_PATH", os.path.dirname(os.path.abspath(__file__))
+        )
     )
-    enable_version_history: bool = Field(
-        default=True,
-        description="Enable version history tracking"
-    )
+    commit_message_template: str = "feat(skills): {skill_name} v{version}"
+    auto_commit: bool = field(default_factory=lambda: _env_bool("GIT_AUTO_COMMIT", True))
 
 
-class GitConfig(BaseModel):
-    """Configuration for Git integration"""
-    repo_path: str = Field(
-        default="/home/praddesilva/ProjectTeams/personal-assistant",
-        description="Path to git repository"
-    )
-    commit_message_template: str = Field(
-        default="feat(skills): {skill_name} v{version}",
-        description="Git commit message template"
-    )
-    auto_commit: bool = Field(
-        default=True,
-        description="Automatically commit changes"
-    )
+@dataclass
+class AgentConfig:
+    """Configuration for the Personal Assistant Agent."""
+
+    name: str = "Personal Assistant"
+    version: str = "1.0.0"
+    description: str = "Personal assistant with skill creation and execution capabilities"
+    enable_intent_detection: bool = True
+    require_confirmation: bool = False
+    max_retries: int = 3
+    timeout: int = 120
+    memory_limit: int = 50
+    verbose: bool = True
 
 
-class AgentConfig(BaseModel):
-    """Configuration for the Personal Assistant Agent"""
-    name: str = Field(default="Personal Assistant", description="Agent name")
-    version: str = Field(default="1.0.0", description="Agent version")
-    description: str = Field(
-        default="Personal assistant with skill creation and execution capabilities",
-        description="Agent description"
-    )
-    enable_intent_detection: bool = Field(default=True)
-    enable_skill_builder: bool = Field(default=True)
-
-
+@dataclass
 class Config:
-    """Central configuration manager"""
-    
-    def __init__(self):
-        self.glm = GLMConfig()
-        self.database = DatabaseConfig()
-        self.git = GitConfig()
-        self.agent = AgentConfig()
-    
-    def load_from_env(self):
-        """Load configuration from environment variables"""
-        if api_key := os.getenv("GLM_API_KEY"):
-            self.glm.api_key = api_key
-        if base_url := os.getenv("GLM_BASE_URL"):
-            self.glm.base_url = base_url
-        if db_path := os.getenv("SKILLS_DB_PATH"):
-            self.database.db_path = db_path
-        if repo_path := os.getenv("GIT_REPO_PATH"):
-            self.git.repo_path = repo_path
-    
+    """Central configuration manager."""
+
+    model: ModelConfig = field(default_factory=ModelConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    git: GitConfig = field(default_factory=GitConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+
     def to_dict(self) -> dict:
-        """Convert configuration to dictionary"""
-        return {
-            "glm": self.glm.model_dump(),
-            "database": self.database.model_dump(),
-            "git": self.git.model_dump(),
-            "agent": self.agent.model_dump()
-        }
+        from dataclasses import asdict
+
+        return asdict(self)
+
+
+def get_config() -> Config:
+    """Build a fresh Config from the current environment."""
+    return Config()
 
 
 # Global configuration instance
-config = Config()
-config.load_from_env()
+config = get_config()
