@@ -308,6 +308,8 @@ def test_integration_log_run_disabled(temp_registry):
     result = stage.execute_skill("quiet", log_run=False)
     assert result["success"] is True
     assert temp_registry.get_skill_runs("quiet") == []
+
+
 def test_run_unknown_skill_raises(temp_registry):
     stage = UnifiedSkillStage(temp_registry)
     with pytest.raises(SkillExecutionError):
