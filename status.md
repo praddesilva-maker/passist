@@ -6,14 +6,14 @@
 
 ## 1. Snapshot
 
-- **Last updated:** 2026-09-16 06:13:04
+- **Last updated:** 2026-09-16 06:22:10
 - **State:** AWAITING_INPUT
 - **Current task:** None assigned — see `RUNBOOK.md` for the next task
 - **Doing right now:** Nothing. The test suite is **green** after an external
   repair session. Waiting for Cline to be restarted against the updated
   `initial.md`.
-- **Next action:** Commit the uncommitted work, then start Task 6 from
-  `RUNBOOK.md` (restore `tests/test_unified_stage.py`).
+- **Next action:** Start Task 6 from `RUNBOOK.md` — restore
+  `tests/test_unified_stage.py` from `git show f6a30a8:tests/test_unified_stage.py`.
 
 ## 2. Task Board
 
@@ -61,7 +61,7 @@ guide slice before being marked `DONE`.
 - **Objective:** Restore a green test suite, then resume the guide from Task 6.
 - **Definition of Done checklist:**
   - [x] `.venv/bin/python -m pytest -q` reports 0 failures and 0 errors
-  - [ ] Existing uncommitted work is committed
+  - [x] Existing uncommitted work is committed (4 labelled commits)
   - [ ] Structure reconciled against guide §1.5, differences recorded in §7
   - [ ] `tests/test_unified_stage.py` restored or its removal justified
 - **Files modified during the repair session:** `skills/registry.py`,
@@ -131,18 +131,32 @@ guide slice before being marked `DONE`.
 
 ## 5. Git Status
 
-- **Branch:** `main`
-- **Last commit:** `f6a30a8` — "feat: add guide and skill builder for personal
-  assistant" — **2026-09-14 20:49:12 +1000**
-- **Uncommitted files:** 32 total (21 modified/deleted + 11 untracked)
-- **Untracked files:** 11 — `.gitignore`, `RUNBOOK.md`, `status.md`,
-  `agent/llm.py`, `skills/models.py`, `tests/conftest.py`,
-  `tests/test_qa_skill.py`, `tests/test_skill_builder.py`,
-  `_probe.txt`, `_probe2.txt`, `_probe3.txt`
-- **⚠️ Risk:** roughly **two days of work is uncommitted**, including entire new
-  modules that exist only as untracked files. Guide §1.2 requires version
-  control. This is the single highest-risk item in the project right now.
-- **Deleted and not replaced:** `tests/test_unified_stage.py` (Task 6's test file)
+- **Branch:** `recovery/repair-and-runbook` (branched from `main`)
+- **`main` is unchanged** — it still points at `f6a30a8`. Merge or fast-forward
+  when you have reviewed the branch. Nothing was pushed.
+- **Last commit:** `1c67fdb` — "docs: add runbook, status reporting and agent
+  workflow rules" — 2026-09-16
+- **Uncommitted files:** 0 tracked. Only `_probe.txt`, `_probe2.txt`,
+  `_probe3.txt` remain untracked — scratch files, deletion is queued as a
+  Carry-Forward Note against Task 0/26.
+
+### Commits on this branch
+
+| SHA | Commit | Contents |
+|---|---|---|
+| `a0caef6` | `chore: add .gitignore and stop tracking build artifacts` | .gitignore; untracked 6 `.pyc` + `skills.db` |
+| `6050ecc` | `feat: implement registry, unified stage, skill builder and main agent` | 12 files, +2522/-961 |
+| `890471e` | `test: add pytest suite with isolated offline fixtures` | 7 files, +411/-136 |
+| `1c67fdb` | `docs: add runbook, status reporting and agent workflow rules` | 5 files, +828/-1 |
+
+**Note on commit granularity:** the original implementation and the 2026-09-16
+repairs could not be split into separate commits. They occupy the same files and
+the working tree held no snapshot of the state between them. The repairs are
+enumerated in `6050ecc`'s commit body instead.
+
+**Artifacts no longer tracked:** `skills/skills.db` and the `__pycache__` `.pyc`
+files were committed before a `.gitignore` existed. They are untracked as of
+`a0caef6` but remain on disk.
 
 ## 6. Blockers & Questions for the Human
 
@@ -203,3 +217,7 @@ committed.
 - 2026-09-16 06:18:00 — Created `RUNBOOK.md`: all 27 tasks with exact guide line ranges for per-task context loading
 - 2026-09-16 06:19:00 — Added Rule 0b (runbook loop, auto-continue, stop conditions) to `initial.md`; rules relabelled into reading order
 - 2026-09-16 06:13:04 — Status refreshed. **Work is uncommitted — commit before starting new tasks.**
+- 2026-09-16 06:20:00 — Created `.clinerules/` (workflow + project rules); amended `/data/ProjectTeams/AGENT_OPERATING_RULES.md` §6 to standardise on `status.md`, grandfathering `STATE.md` in BMAD Team / AI-103 / Agentic PMO
+- 2026-09-16 06:21:00 — Branched `recovery/repair-and-runbook` off `main` (house rules §0: agents do not write to `main`)
+- 2026-09-16 06:21:30 — Committed the backlog in 4 labelled commits: `a0caef6`, `6050ecc`, `890471e`, `1c67fdb`. Nothing pushed.
+- 2026-09-16 06:22:10 — Re-ran suite on the committed tree: **27 passed, 1 skipped, 0 failed, 0 errors**. Working tree clean except 3 scratch probe files.
