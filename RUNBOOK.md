@@ -93,7 +93,7 @@ do not mark it `DONE` without verifying it meets that task's stated DoD.
 | 3 | Registry System — Version Control Operations | `1053-1348` | 296 | skills/registry.py (versions) | REVIEW |  |
 | 4 | Unified Stage — Basic Implementation | `1349-1578` | 230 | skills/unified_stage.py | REVIEW |  |
 | 5 | Unified Stage — Skill Loading | `1579-1856` | 278 | skills/unified_stage.py (loading) | REVIEW |  |
-| 6 | Unified Stage — Testing | `1857-2070` | 214 | tests/test_unified_stage.py | BLOCKED | test_unified_stage.py deleted; restore: git show f6a30a8:tests/test_unified_stage.py |
+| 6 | Unified Stage — Testing | `1857-2070` | 214 | tests/test_unified_stage.py | DONE | restored+rewritten vs current API; 25 tests, suite green, 82% coverage (2026-09-16); commits 8b8875d, d159245 |
 | 7 | New Skill Pipeline — Intent Analysis | `2071-2295` | 225 | pipelines/new_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |
 | 8 | New Skill Pipeline — Skill Structure Generation | `2296-2549` | 254 | pipelines/new_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |
 | 9 | New Skill Pipeline — Code Generation | `2550-2778` | 229 | pipelines/new_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |

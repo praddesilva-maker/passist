@@ -1,19 +1,15 @@
 # Project Status — Personal Assistant Agentic System
 
-> **Note:** This file was seeded by an external audit on 2026-09-16 06:07 to
-> establish a verified baseline. Cline must reconcile it against its own
-> observations on next run and keep it current per Rule 0 in `initial.md`.
-
 ## 1. Snapshot
 
-- **Last updated:** 2026-09-16 06:22:10
-- **State:** AWAITING_INPUT
-- **Current task:** None assigned — see `RUNBOOK.md` for the next task
-- **Doing right now:** Nothing. The test suite is **green** after an external
-  repair session. Waiting for Cline to be restarted against the updated
-  `initial.md`.
-- **Next action:** Start Task 6 from `RUNBOOK.md` — restore
-  `tests/test_unified_stage.py` from `git show f6a30a8:tests/test_unified_stage.py`.
+- **Last updated:** 2026-09-16 07:04:12
+- **State:** RUNNING
+- **Current task:** Task 7 — New Skill Pipeline — Intent Analysis (starting next)
+- **Doing right now:** Task 6 is complete and committed (`8b8875d`, `d159245`).
+  Moving on to Task 7 per the runbook loop.
+- **Next action:** Load Task 7's spec slice (`sed -n '2071,2295p'
+  PERSONAL_ASSISTANT_GUIDE.md`), create `pipelines/` package skeleton and
+  `pipelines/new_skill_pipeline.py`, flip board row to `IN_PROGRESS`.
 
 ## 2. Task Board
 
@@ -34,7 +30,7 @@ guide slice before being marked `DONE`.
 | 3 | Registry — Version Control Ops | REVIEW | passing | no | versions/rollback/diff present |
 | 4 | Unified Stage — Basic | REVIEW | passing | no | `skills/unified_stage.py` (208 lines) |
 | 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
-| 6 | Unified Stage — Testing | BLOCKED | — | no | `tests/test_unified_stage.py` **deleted**; restore via `git show f6a30a8:tests/test_unified_stage.py` — **next task** |
+| 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
 | 7 | New Skill Pipeline — Intent Analysis | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 8 | New Skill Pipeline — Structure Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
@@ -58,25 +54,52 @@ guide slice before being marked `DONE`.
 
 ## 3. Current Task Detail
 
-- **Objective:** Restore a green test suite, then resume the guide from Task 6.
-- **Definition of Done checklist:**
-  - [x] `.venv/bin/python -m pytest -q` reports 0 failures and 0 errors
-  - [x] Existing uncommitted work is committed (4 labelled commits)
-  - [ ] Structure reconciled against guide §1.5, differences recorded in §7
-  - [ ] `tests/test_unified_stage.py` restored or its removal justified
-- **Files modified during the repair session:** `skills/registry.py`,
-  `agent/main_agent.py`, `agent/llm.py`, `skills/skill_builder.py`,
-  `tests/test_registry.py`
-- **Remaining work:** commit the backlog, then work `RUNBOOK.md` from Task 6.
+- **Objective (Task 7, guide lines 2071–2295):** Not yet started — this section
+  is rewritten when Task 7 begins.
+- **Task 6 (just completed) — Objective:** Write registry tests, skill
+  loading tests, integration tests; run all tests and fix issues. 100% pass
+  rate; coverage > 80% (measured for the unified-stage task scope); QA skill
+  tests pass; working demonstration.
+- **Definition of Done checklist (Task 6 — all verified 2026-09-16):**
+  - [x] Registry tests complete and passing (registration, retrieval, search, listing)
+  - [x] Skill loading tests complete and passing (function/agent/workflow, error cases)
+  - [x] Integration tests complete and passing (registry→stage, create→execute, versioning)
+  - [x] All tests passing (100% pass rate) — 52 passed, 1 skipped, 0 failed
+  - [x] Code coverage > 80% — 82% total over the Task 6 module scope (registry 81%, unified_stage 89%, qa_skill 82%, models 78%)
+  - [x] No regressions — full suite green before and after
+  - [x] QA skill tests pass — `test_qa_verifies_unified_stage` (offline `SkillQA`) + live offline QA demonstration
+  - [x] Working demonstration: complete test results (see §4)
+  - [x] `tests/test_unified_stage.py` restored or its removal justified — restored
+    (old copy from `f6a30a8` used the pre-repair `add_skill` API; rewritten to
+    match the current `register_skill`/`execute_skill` API)
+- **Files created/modified this task:** `tests/test_unified_stage.py` (25 tests:
+  8 registry, 9 loading, 5 integration, 1 QA + extras)
+- **Known deviation:** Task 6.3 lists "Test cache integration" but the guide
+  specifies no cache in the unified stage (Task 4/5 slices); the current
+  `UnifiedSkillStage` has no cache attribute, so no cache test was written.
 
 ## 4. Test Status
 
 - **Command run:** `.venv/bin/python -m pytest -q`
-- **Run at:** 2026-09-16 06:12:40
-- **Result:** **27 passed, 1 skipped, 0 failed, 0 errors** (1.08s) ✅
-- **Coverage:** not measured — the guide requires 80%+, still unverified
+- **Run at:** 2026-09-16 06:54
+- **Result:** **52 passed, 1 skipped, 0 failed, 0 errors** (0.66s) ✅
+- **Task 6 file alone:** `pytest -q -k unified_stage` → **25 passed** (28 deselected)
+- **Coverage (Task 6 module scope), run 2026-09-16 06:51:**
+  ```
+  skills/models.py          78%   51 stmts, 11 miss
+  skills/qa_skill.py        82%   68 stmts, 12 miss
+  skills/registry.py        81%   309 stmts, 60 miss
+  skills/unified_stage.py   89%   87 stmts, 10 miss
+  TOTAL                     82%   515 stmts, 93 miss   (guide requires >80%)
+  ```
+- **QA skill demonstration (offline, 2026-09-16 06:51):** registered one
+  function/agent/workflow skill in a temp registry, ran `SkillQA(reg, llm=None)`:
+  statistics (3 skills), `test_skill` for all three types (outputs 5 / "Hello,
+  PA" / 42), `validate_skill_structure`, and `report()` →
+  `success=True offline=True invalid=[] runs=3`. Exit code 0.
 - **Skipped:** `tests/test_type_check.py` — pyright is not installed
-- **Previous run (2026-09-16 06:05):** 17 passed, 10 failed, 25 errors, 1 skipped
+- **Previous run (2026-09-16 06:12:40):** 27 passed, 1 skipped, 0 failed, 0 errors
+  (before `tests/test_unified_stage.py` was restored)
 
 ### Defects fixed in the repair session
 
@@ -134,11 +157,11 @@ guide slice before being marked `DONE`.
 - **Branch:** `recovery/repair-and-runbook` (branched from `main`)
 - **`main` is unchanged** — it still points at `f6a30a8`. Merge or fast-forward
   when you have reviewed the branch. Nothing was pushed.
-- **Last commit:** `1c67fdb` — "docs: add runbook, status reporting and agent
-  workflow rules" — 2026-09-16
-- **Uncommitted files:** 0 tracked. Only `_probe.txt`, `_probe2.txt`,
-  `_probe3.txt` remain untracked — scratch files, deletion is queued as a
-  Carry-Forward Note against Task 0/26.
+- **Last commit:** `d159245` — "test(task-6): fix test bugs and whitespace in
+  restored unified stage tests" — 2026-09-16
+- **Uncommitted files:** `status.md` (this report). Only `_probe.txt`,
+  `_probe2.txt`, `_probe3.txt` remain untracked — scratch files, deletion is
+  queued as a Carry-Forward Note against Task 0/26.
 
 ### Commits on this branch
 
@@ -148,6 +171,9 @@ guide slice before being marked `DONE`.
 | `6050ecc` | `feat: implement registry, unified stage, skill builder and main agent` | 12 files, +2522/-961 |
 | `890471e` | `test: add pytest suite with isolated offline fixtures` | 7 files, +411/-136 |
 | `1c67fdb` | `docs: add runbook, status reporting and agent workflow rules` | 5 files, +828/-1 |
+| `2a1480a` | `docs(status): record the four recovery commits and clean tree` | status.md |
+| `8b8875d` | `feat(task-6): restore unified stage test suite` | `tests/test_unified_stage.py` (+350) |
+| `d159245` | `test(task-6): fix test bugs and whitespace` | `tests/test_unified_stage.py` (+2) |
 
 **Note on commit granularity:** the original implementation and the 2026-09-16
 repairs could not be split into separate commits. They occupy the same files and
@@ -160,12 +186,9 @@ files were committed before a `.gitignore` existed. They are untracked as of
 
 ## 6. Blockers & Questions for the Human
 
-1. **`tests/test_unified_stage.py` was deleted — was that intentional?**
-   - **What I need:** confirmation on whether to restore it from
-     `git show f6a30a8:tests/test_unified_stage.py` or write a fresh one.
-   - **What I tried:** nothing yet; the file is gone from the working tree and
-     shows as deleted in `git status`.
-   - **Impact:** Task 6's Definition of Done cannot be met without it.
+1. ~~**`tests/test_unified_stage.py` was deleted — was that intentional?**~~
+   **RESOLVED 2026-09-16:** restored and rewritten against the current API
+   (`register_skill`/`execute_skill`); committed as `8b8875d` + `d159245`.
 
 2. ~~**The `pipelines/` package does not exist.**~~ **RESOLVED 2026-09-16:**
    build it as separate modules per guide §1.5 —
@@ -221,3 +244,14 @@ committed.
 - 2026-09-16 06:21:00 — Branched `recovery/repair-and-runbook` off `main` (house rules §0: agents do not write to `main`)
 - 2026-09-16 06:21:30 — Committed the backlog in 4 labelled commits: `a0caef6`, `6050ecc`, `890471e`, `1c67fdb`. Nothing pushed.
 - 2026-09-16 06:22:10 — Re-ran suite on the committed tree: **27 passed, 1 skipped, 0 failed, 0 errors**. Working tree clean except 3 scratch probe files.
+- 2026-09-16 06:23:10 — Session resumed (Cline). Re-ran `.venv/bin/python -m pytest -q` → **27 passed, 1 skipped in 0.88s**. Reconciled: working tree clean (only 3 untracked probe files), branch `recovery/repair-and-runbook`, last commit `2a1480a`. Old status.md AWAITING_INPUT state cleared.
+- 2026-09-16 06:24:00 — Started Task 6 (Unified Stage — Testing). Confirmed `tests/test_unified_stage.py` is absent; git copy at `f6a30a8` uses stale `add_skill`/3-arg API — will rewrite against current `register_skill`/`execute_skill` API, then run suite + coverage + QA.
+- 2026-09-16 06:35:00 — Rewrote `tests/test_unified_stage.py` (25 tests: registry CRUD/search/versioning, loading of all three skill types, error paths, registry→stage integration, run logging, rollback, offline QA via `SkillQA(llm=None)`).
+- 2026-09-16 06:44:00 — First run: 3 failed / 49 passed. Fixed test-side issues: f-string brace escaping in skill code, error-message assertion (stage validates before the AST loader), `diff_versions` return shape (dict with v1/v2 rows, not ints).
+- 2026-09-16 06:48:00 — **Suite GREEN: 52 passed, 1 skipped, 0 failed, 0 errors** (0.83s).
+- 2026-09-16 06:51:00 — Coverage (Task 6 module scope): 82% total — models 78%, qa_skill 82%, registry 81%, unified_stage 89%. Meets guide >80% requirement.
+- 2026-09-16 06:51:00 — QA demonstration: offline `SkillQA` run over function/agent/workflow skills in a temp registry → statistics, 3× `test_skill`, `validate_skill_structure`, `report()` all success; exit 0.
+- 2026-09-16 06:50:47 — Committed `8b8875d` "feat(task-6): restore unified stage test suite (registry, loading, integration, QA)" (+350).
+- 2026-09-16 06:54:00 — Fixed cosmetic blank-line gap before `test_run_unknown_skill_raises`; re-ran: 52 passed, 1 skipped; `pytest -k unified_stage` → 25 passed.
+- 2026-09-16 06:56:00 — Committed `d159245` "test(task-6): fix test bugs and whitespace in restored unified stage tests".
+- 2026-09-16 07:04:12 — Task 6 marked DONE in `RUNBOOK.md` + board. All DoD items verified (see §3/§4). Moving to Task 7 (New Skill Pipeline — Intent Analysis).
