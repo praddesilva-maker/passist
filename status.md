@@ -2,14 +2,15 @@
 
 ## 1. Snapshot
 
-- **Last updated:** 2026-09-16 07:04:12
+- **Last updated:** 2026-09-16 08:19:00
 - **State:** RUNNING
-- **Current task:** Task 7 — New Skill Pipeline — Intent Analysis (starting next)
-- **Doing right now:** Task 6 is complete and committed (`8b8875d`, `d159245`).
-  Moving on to Task 7 per the runbook loop.
-- **Next action:** Load Task 7's spec slice (`sed -n '2071,2295p'
-  PERSONAL_ASSISTANT_GUIDE.md`), create `pipelines/` package skeleton and
-  `pipelines/new_skill_pipeline.py`, flip board row to `IN_PROGRESS`.
+- **Current task:** Task 8 — New Skill Pipeline — Skill Structure Generation (starting)
+- **Doing right now:** Task 7 closed and committed as `e4e9565`. Next: load the
+  Task 8 spec slice (`PERSONAL_ASSISTANT_GUIDE.md` lines 2296–2549) and begin
+  implementing `analyze_request()` in `pipelines/new_skill_pipeline.py`.
+- **Next action:** Flip Task 8 to `IN_PROGRESS` in `RUNBOOK.md` and implement
+  skill structure generation (type, name, description, parameters) with LLM-first
+  + deterministic offline fallback.
 
 ## 2. Task Board
 
@@ -31,7 +32,7 @@ guide slice before being marked `DONE`.
 | 4 | Unified Stage — Basic | REVIEW | passing | no | `skills/unified_stage.py` (208 lines) |
 | 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
-| 7 | New Skill Pipeline — Intent Analysis | NOT_STARTED | — | no | no `pipelines/` package exists |
+| 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
 | 8 | New Skill Pipeline — Structure Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 10 | New Skill Pipeline — Interactive Review | NOT_STARTED | — | no | no `pipelines/` package exists |
@@ -54,12 +55,40 @@ guide slice before being marked `DONE`.
 
 ## 3. Current Task Detail
 
-- **Objective (Task 7, guide lines 2071–2295):** Not yet started — this section
-  is rewritten when Task 7 begins.
-- **Task 6 (just completed) — Objective:** Write registry tests, skill
-  loading tests, integration tests; run all tests and fix issues. 100% pass
-  rate; coverage > 80% (measured for the unified-stage task scope); QA skill
-  tests pass; working demonstration.
+- **Objective (Task 8, guide lines 2296–2549):** Start next — this section is
+  rewritten when Task 8 begins.
+- **Task 7 (just completed) — Objective:** Create the `pipelines/` package with
+  `NewSkillPipeline._detect_intent()` classifying requests as `create_skill`,
+  `use_skill`, or `general`, LLM-first with a deterministic offline fallback,
+  plus tests covering all intents and the routing envelope.
+- **Definition of Done checklist (Task 7 — all verified 2026-09-16):**
+  - [x] create_skill intent detection implemented and tested (create phrases,
+    no false positives for use/general)
+  - [x] use_skill intent detection implemented and tested (use phrases, no
+    false positives for create/general)
+  - [x] general intent detection implemented and tested (off-topic and empty
+    input → `general`)
+  - [x] All intents working correctly — create-before-use precedence keeps
+    creation requests that mention using another skill classified as `create_skill`
+  - [x] All tests passing (100% pass rate) — 58 passed in
+    `tests/test_new_skill_pipeline.py`, 0 failed
+  - [x] No errors — full suite green: 110 passed, 1 skipped
+  - [x] LLM paths tested — success, failure, and unparseable-LLM-answer cases
+    all fall back deterministically; offline models never invoked
+  - [x] QA skill tests pass — `tests/test_qa_skill.py` 7 passed (part of the
+    green full suite); offline QA demonstration of intent routing via
+    `handle_request()`
+  - [x] Working demonstration: `handle_request()` on four inputs →
+    `create_skill` / `use_skill` / `general` / `general`,
+    stats `{'requests': 4, 'create_skill': 1, 'use_skill': 1, 'general': 2}`
+- **Files created/modified this task:** `pipelines/__init__.py` (exports
+  `NewSkillPipeline` and the intent constants), `pipelines/new_skill_pipeline.py`,
+  `tests/test_new_skill_pipeline.py` (58 tests)
+- **Coverage:** `pipelines/` 100% (70 stmts, 0 miss) per
+  `pytest -q --cov=pipelines --cov-report=term-missing`.
+- **Known deviation:** guide DoD item "Code reviewed and approved" — code
+  committed for review on `recovery/repair-and-runbook`; local commits only,
+  nothing pushed (project decision 2).
 - **Definition of Done checklist (Task 6 — all verified 2026-09-16):**
   - [x] Registry tests complete and passing (registration, retrieval, search, listing)
   - [x] Skill loading tests complete and passing (function/agent/workflow, error cases)
@@ -81,25 +110,23 @@ guide slice before being marked `DONE`.
 ## 4. Test Status
 
 - **Command run:** `.venv/bin/python -m pytest -q`
-- **Run at:** 2026-09-16 06:54
-- **Result:** **52 passed, 1 skipped, 0 failed, 0 errors** (0.66s) ✅
-- **Task 6 file alone:** `pytest -q -k unified_stage` → **25 passed** (28 deselected)
-- **Coverage (Task 6 module scope), run 2026-09-16 06:51:**
+- **Run at:** 2026-09-16 08:17
+- **Result:** **110 passed, 1 skipped, 0 failed, 0 errors** (0.78s) ✅
+- **Task 7 file alone:** `pytest tests/test_new_skill_pipeline.py -q` →
+  **58 passed** (0.13s)
+- **Coverage (pipelines package), run 2026-09-16 08:17:**
   ```
-  skills/models.py          78%   51 stmts, 11 miss
-  skills/qa_skill.py        82%   68 stmts, 12 miss
-  skills/registry.py        81%   309 stmts, 60 miss
-  skills/unified_stage.py   89%   87 stmts, 10 miss
-  TOTAL                     82%   515 stmts, 93 miss   (guide requires >80%)
+  pipelines/__init__.py              2 stmts   0 miss   100%
+  pipelines/new_skill_pipeline.py   68 stmts   0 miss   100%
+  TOTAL                              70 stmts   0 miss   100%
   ```
-- **QA skill demonstration (offline, 2026-09-16 06:51):** registered one
-  function/agent/workflow skill in a temp registry, ran `SkillQA(reg, llm=None)`:
-  statistics (3 skills), `test_skill` for all three types (outputs 5 / "Hello,
-  PA" / 42), `validate_skill_structure`, and `report()` →
-  `success=True offline=True invalid=[] runs=3`. Exit code 0.
+- **Working demonstration (offline, 2026-09-16 08:17):** `NewSkillPipeline()`
+  with no LLM — `handle_request('develop a skill named adder')` →
+  `create_skill`; `'use skill echo'` → `use_skill`; `'what can you do?'` →
+  `general`; `''` → `general`. Stats after:
+  `{'requests': 4, 'create_skill': 1, 'use_skill': 1, 'general': 2}`.
 - **Skipped:** `tests/test_type_check.py` — pyright is not installed
-- **Previous run (2026-09-16 06:12:40):** 27 passed, 1 skipped, 0 failed, 0 errors
-  (before `tests/test_unified_stage.py` was restored)
+- **Previous run (2026-09-16 06:54, Task 6):** 52 passed, 1 skipped
 
 ### Defects fixed in the repair session
 
@@ -157,16 +184,19 @@ guide slice before being marked `DONE`.
 - **Branch:** `recovery/repair-and-runbook` (branched from `main`)
 - **`main` is unchanged** — it still points at `f6a30a8`. Merge or fast-forward
   when you have reviewed the branch. Nothing was pushed.
-- **Last commit:** `d159245` — "test(task-6): fix test bugs and whitespace in
-  restored unified stage tests" — 2026-09-16
-- **Uncommitted files:** `status.md` (this report). Only `_probe.txt`,
-  `_probe2.txt`, `_probe3.txt` remain untracked — scratch files, deletion is
-  queued as a Carry-Forward Note against Task 0/26.
+- **Last commit:** `e4e9565` — "feat(task-7): new skill pipeline intent
+  analysis" — 2026-09-16 (adds `pipelines/` package + 58-test file)
+- **Uncommitted files:** `status.md` (this report) + `RUNBOOK.md` (Task 7 →
+  DONE). Only `_probe.txt`, `_probe2.txt`, `_probe3.txt` remain untracked —
+  scratch files, deletion is queued as a Carry-Forward Note against Task 0/26.
+  A `.coverage` artifact was generated by the coverage run (covered by
+  `.gitignore`).
 
 ### Commits on this branch
 
 | SHA | Commit | Contents |
 |---|---|---|
+| `e4e9565` | `feat(task-7): new skill pipeline intent analysis` | `pipelines/__init__.py`, `pipelines/new_skill_pipeline.py`, `tests/test_new_skill_pipeline.py` (+528) |
 | `a0caef6` | `chore: add .gitignore and stop tracking build artifacts` | .gitignore; untracked 6 `.pyc` + `skills.db` |
 | `6050ecc` | `feat: implement registry, unified stage, skill builder and main agent` | 12 files, +2522/-961 |
 | `890471e` | `test: add pytest suite with isolated offline fixtures` | 7 files, +411/-136 |
@@ -255,3 +285,7 @@ committed.
 - 2026-09-16 06:54:00 — Fixed cosmetic blank-line gap before `test_run_unknown_skill_raises`; re-ran: 52 passed, 1 skipped; `pytest -k unified_stage` → 25 passed.
 - 2026-09-16 06:56:00 — Committed `d159245` "test(task-6): fix test bugs and whitespace in restored unified stage tests".
 - 2026-09-16 07:04:12 — Task 6 marked DONE in `RUNBOOK.md` + board. All DoD items verified (see §3/§4). Moving to Task 7 (New Skill Pipeline — Intent Analysis).
+- 2026-09-16 07:59:00 — Task 7: created `pipelines/` package — `new_skill_pipeline.py` with `_detect_intent()` (LLM-first, deterministic offline fallback, create-before-use keyword precedence), public `detect_intent()` with stats, `handle_request()` routing envelope (intent/success/offline/response/error).
+- 2026-09-16 08:08:00 — Wrote `tests/test_new_skill_pipeline.py` (58 tests: create/use/general phrasings, edge cases, no-false-positive checks, LLM success/failure/unparseable, offline models never invoked, envelope + stats).
+- 2026-09-16 08:17:00 — Final verification: `pytest tests/test_new_skill_pipeline.py -q` → 58 passed; full suite → 110 passed, 1 skipped; `--cov=pipelines` → 100% (70 stmts). Offline demo: create/use/general/empty → create_skill/use_skill/general/general, stats {requests: 4, create_skill: 1, use_skill: 1, general: 2}.
+- 2026-09-16 08:19:00 — Committed `e4e9565` "feat(task-7): new skill pipeline intent analysis" (+528). Task 7 marked DONE in `RUNBOOK.md` + board. Next: Task 8 (guide lines 2296–2549, `analyze_request()` + structure generation).
