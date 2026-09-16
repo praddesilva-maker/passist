@@ -5,8 +5,8 @@
   - **Last updated:** 2026-09-17 (AEST)
   - **State:** RUNNING
     - **Current task:** Task 11 — New Skill Pipeline — Test & Register (guide lines 3001–3145)
-    - **Doing right now:** Phase 0 reconcile complete — stale runbook/status rows corrected (4 in `RUNBOOK.md`, 5 here). Next: implement `create_skill()`.
-    - **Next action:** Phase 1 — implement `create_skill()` on the existing helpers, fix the two defects found in the uncommitted helper code, add tests, commit.
+    - **Doing right now:** Phases 0 and 1 complete. Task 11 is DONE; suite 192 passed, 1 skipped.
+    - **Next action:** Phase 2 — verification sweep of Tasks 0–5, 12, 14, 18, 20, 21, 23, 24, grouped by file per RUNBOOK Resolved decision 5.
 
   - **Execution plan for this run (owner-approved 2026-09-17):**
     - Phase 0 — reconcile stale bookkeeping *(complete)*
@@ -41,9 +41,9 @@ guide slice before being marked `DONE`.
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
 | 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
  | 8 | New Skill Pipeline — Structure Gen | DONE | 95 | yes | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
-  | 9 | New Skill Pipeline — Code Gen | DONE | in-file | yes | `8fea6d1`/`681a6b4`; code generation helpers for function/agent/workflow skills implemented |
+  | 9 | New Skill Pipeline — Code Gen | DONE | 7 in file | yes | `8fea6d1`/`681a6b4`; **defect found & fixed during Task 11 (2026-09-17):** all three generators emitted `return <key>` naming an undefined variable → every generated skill raised `NameError`. Task 9 shipped with its own DoD checklist unticked and **no tests at all** for the generators; regression tests now added |
  | 10 | New Skill Pipeline — Interactive Review | DONE | 115 in file | yes | repaired 2026-09-16: pipeline restored from `584323b` (HEAD copy corrupted), typing import fixed, 19 review-helper tests added |
-| 11 | New Skill Pipeline — Test & Register | IN_PROGRESS | — | no | helpers `_register_skill`/`_run_qa_gate`/DI-constructor/status-constants exist (uncommitted, untested); `create_skill()` still missing |
+| 11 | New Skill Pipeline — Test & Register | DONE | 140 in file | yes | `create_skill()` + `generate_code()`; 7 terminal statuses; opt-in git; 25 tests added; suite 192 passed; `pipelines/` 95% |
 | 12 | Skill Builder — Basic Features | REVIEW | passing | no | `skills/skill_builder.py` (131 lines), has a blocking bug |
 | 13 | Skill Builder — Advanced Features | NOT_STARTED | — | no | |
 | 14 | Skill Builder — Testing & Integration | BLOCKED | passing | no | 3 of 6 tests fail on the same defect |
@@ -111,6 +111,83 @@ guide slice before being marked `DONE`.
 - **Known deviation:** Task 6.3 lists "Test cache integration" but the guide
   specifies no cache in the unified stage (Task 4/5 slices); the current
   `UnifiedSkillStage` has no cache attribute, so no cache test was written.
+
+## 3b. Task 11 — New Skill Pipeline: Testing and Registration (DONE 2026-09-17)
+
+- **Objective (guide lines 3001–3145):** complete `create_skill()` — analyze
+  request → generate structure → generate code → display for review → get
+  confirmation → register — then verify the result.
+
+- **Definition of Done checklist:**
+  - [x] `create_skill()` implemented — all six steps integrated
+  - [x] Registration working — via `SkillBuilder` → `SkillRegistry`, v1
+  - [x] Version control integrated — **opt-in** `git=` parameter; a failing
+        VCS is caught and never fails a creation. Opt-in deliberately, so
+        neither the test suite nor an offline run commits as a side effect.
+  - [x] All tests passing (100%) — 192 passed, 1 skipped
+  - [x] No errors
+  - [x] QA skill tests pass — the QA gate runs `validate_skill_structure()`
+        + `test_skill()` over the registered skill
+  - [x] Working demonstration — see §4
+
+- **Design note — the QA gate runs *after* registration.** Both of its checks
+  look the skill up in the registry, so it cannot run earlier. A `qa_failed`
+  result therefore means *registered but did not pass its smoke test*, and the
+  envelope says so rather than implying nothing was written.
+
+- **Seven terminal statuses** (`ALL_STATUSES`): `completed`, `qa_failed`,
+  `registration_failed`, `already_exists`, `cancelled`, `edit_requested`,
+  `error`. `cancelled` and `edit_requested` were added in this task —
+  `edit_requested` is the honest terminal state for "user asked to edit but no
+  interactive builder is wired up yet" (that callback arrives with Tasks 12–13)
+  rather than silently registering an unreviewed skill.
+
+### Defects found and fixed in this task
+
+1. **Task 9 — generated code did not run (real correctness bug).** All three
+   generators emitted `return <return_key>`, naming a variable that was never
+   bound, so *every* generated skill raised
+   `NameError: name 'result' is not defined` the moment it executed. Task 9's
+   DoD said "write tests that verify the generated code is syntactically
+   correct" — syntax was all anything checked, and in fact **no test
+   referenced the three generators at all**, while Task 9's own DoD checklist
+   sat unticked in this file even as the board row read DONE. The generators
+   now bind a type-appropriate placeholder (`_placeholder_literal`), and
+   `test_generated_code_actually_executes` compiles *and calls* the result for
+   all three skill types.
+
+2. **Duplicate names were misclassified.** `_register_skill` caught
+   `SkillAlreadyExistsError`, but `SkillBuilder.register()` catches
+   `RegistryError` itself and returns `{"success": False, ...}` rather than
+   raising — so the `except` branch was dead code and a re-registration was
+   reported as `registration_failed`. The duplicate is now read from the
+   returned payload; the `except` branch is kept only for an injected builder
+   that does raise.
+
+3. **The QA gate failed every parameterised skill.** `DEFAULT_QA_INPUT` was
+   hardcoded to `{"input_value": "qa-gate"}`, but a skill that declares
+   parameters gets a `run` whose signature is those parameters — the workflow
+   template gives them no defaults at all — so the smoke test raised
+   `TypeError`. `_qa_input_for()` now derives the input from the structure.
+
+Defects 2 and 3 were in uncommitted working-tree code inherited from the
+previous run; defect 1 was in committed, already-`DONE` work.
+
+- **Files modified:** `pipelines/new_skill_pipeline.py`,
+  `pipelines/__init__.py` (status exports), `tests/test_new_skill_pipeline.py`
+  (+25 tests → 140 in file).
+- **Coverage:** `pipelines/` **95%** (458 stmts, 24 miss).
+- **Known deviation:** guide DoD item "Code reviewed and approved" — local
+  commits only, nothing pushed (project decision 2).
+
+### Carry-forward notes
+
+- `DEFAULT_PARAMETERS` names its parameter `input`, which shadows the builtin
+  in every generated skill. Cosmetic, pre-existing (Task 8) — belongs to a
+  Task 8 revisit, not here.
+- The `stats` dict has both the Task 7 intent counter `create_skill` and the
+  Task 11 flow counter `create_total`. Confusingly similar names; renaming
+  would break the Task 7 tests, so left alone.
 
 ## 4. Test Status
 

@@ -741,3 +741,285 @@ def test_review_skill_displays_the_skill_then_prompts(monkeypatch, capsys):
     assert "Name: adder" in out
     assert "Skill type: function" in out
 
+
+
+# ===========================================================================
+# Task 11 (guide §1.8.12): testing and registration — the complete
+# ``create_skill()`` flow, its code-generation dispatch, the QA gate input,
+# and every terminal status.
+# ===========================================================================
+
+from pipelines.new_skill_pipeline import (  # noqa: E402
+    DEFAULT_QA_INPUT,
+    STATUS_ALREADY_EXISTS,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_EDIT_REQUESTED,
+    STATUS_ERROR,
+    STATUS_QA_FAILED,
+    STATUS_REGISTRATION_FAILED,
+)
+
+
+@pytest.fixture
+def pipeline(temp_registry):
+    """A pipeline wired to an isolated, offline registry."""
+    return NewSkillPipeline(registry=temp_registry)
+
+
+class _StubBuilder:
+    """Builder that reports a structured failure, as the real one does."""
+
+    def __init__(self, error="RegistryError: nope"):
+        self.error = error
+
+    def register(self, **kwargs):
+        return {"success": False, "skill": None, "error": self.error}
+
+
+class _StubQA:
+    """QA double that fails the smoke test."""
+
+    def validate_skill_structure(self, name):
+        return {"success": True, "valid": True, "errors": []}
+
+    def test_skill(self, name, input_data=None):
+        return {"success": False, "error": "boom"}
+
+
+class _StubGit:
+    def __init__(self, ok=True):
+        self.ok, self.messages = ok, []
+
+    def commit(self, message):
+        self.messages.append(message)
+        return self.ok
+
+
+# --- code-generation dispatch ---------------------------------------------
+
+@pytest.mark.parametrize(
+    "declared, marker",
+    [
+        ("function", "run_tool = tool("),
+        ("agent", "agent_tool = tool("),
+        ("workflow", "# Workflow skill"),
+        ("nonsense-type", "run_tool = tool("),   # canonicalizes to function
+    ],
+)
+def test_generate_code_dispatches_on_type(pipeline, declared, marker):
+    structure = pipeline.analyze_request(
+        "create a skill named dispatcher", {"type": declared}
+    )
+    assert marker in pipeline.generate_code(structure)
+
+
+@pytest.mark.parametrize("declared", ["function", "agent", "workflow"])
+def test_generated_code_actually_executes(pipeline, declared):
+    """Regression for the Task 9 defect: ``return result`` named an
+    undefined variable, so every generated skill raised ``NameError`` the
+    moment it ran.  Task 9's DoD only ever checked syntax, so nothing
+    caught it until the Task 11 flow executed a skill end to end."""
+    structure = pipeline.analyze_request(
+        "create a skill named runme", {"type": declared}
+    )
+    namespace = {}
+    exec(compile(pipeline.generate_code(structure), "<generated>", "exec"), namespace)
+    assert "run" in namespace
+    # Call it the way the QA gate does - with an input derived from the
+    # structure's own parameters.
+    namespace["run"](**pipeline._qa_input_for(structure))   # must not raise
+
+
+# --- QA gate input (defect: hardcoded {"input_value": ...}) ---------------
+
+def test_qa_input_defaults_when_no_parameters(pipeline):
+    assert pipeline._qa_input_for({"parameters": {}}) == DEFAULT_QA_INPUT
+    assert pipeline._qa_input_for({}) == DEFAULT_QA_INPUT
+
+
+def test_qa_input_is_derived_from_declared_parameters(pipeline):
+    structure = {
+        "parameters": {
+            "count": {"type": "int"},
+            "label": {"type": "str"},
+            "ratio": {"type": "float"},
+            "flag": {"type": "bool"},
+            "weird": {"type": "unmapped"},
+        }
+    }
+    assert pipeline._qa_input_for(structure) == {
+        "count": 1, "label": "qa-gate", "ratio": 1.0,
+        "flag": True, "weird": "qa-gate",
+    }
+
+
+def test_qa_gate_passes_a_parameterised_workflow(pipeline):
+    """A workflow's generated ``run`` has no defaulted parameters, so a
+    fixed QA input would raise TypeError and fail every such skill."""
+    result = pipeline.create_skill(
+        "build a workflow skill called paramflow",
+        request_data={
+            "type": "workflow",
+            "parameters": {"amount": {"description": "a", "type": "int"}},
+        },
+        auto_confirm=True,
+    )
+    assert result["status"] == STATUS_COMPLETED, result["errors"]
+
+
+# --- terminal statuses ----------------------------------------------------
+
+def test_create_skill_completed(pipeline, temp_registry):
+    result = pipeline.create_skill(
+        "create a skill named greeter that greets people", auto_confirm=True
+    )
+    assert result["status"] == STATUS_COMPLETED
+    assert result["success"] is True
+    assert result["skill_name"] == "greeter"
+    assert result["qa"]["passed"] is True
+    assert result["committed"] is False           # version control is opt-in
+    assert temp_registry.get_skill("greeter") is not None
+
+
+def test_create_skill_already_exists_is_an_idempotent_no_op(pipeline):
+    request = "create a skill named twice that does a thing"
+    assert pipeline.create_skill(request, auto_confirm=True)["status"] == STATUS_COMPLETED
+    second = pipeline.create_skill(request, auto_confirm=True)
+    assert second["status"] == STATUS_ALREADY_EXISTS
+    assert second["success"] is False
+
+
+def test_duplicate_is_read_from_the_builder_payload(pipeline):
+    """Regression: ``SkillBuilder.register()`` catches ``RegistryError`` and
+    returns ``{"success": False, ...}`` rather than raising, so the
+    duplicate must be classified from the payload, not an exception."""
+    outcome = pipeline._register_skill(
+        {"name": "dup"}, "def run(): pass"
+    )  # first registration succeeds
+    assert outcome["ok"] and not outcome["duplicate"]
+    again = pipeline._register_skill({"name": "dup"}, "def run(): pass")
+    assert again["duplicate"] is True
+    assert again["ok"] is True
+    assert again["error"] is None
+
+
+def test_create_skill_registration_failed(temp_registry):
+    p = NewSkillPipeline(registry=temp_registry, builder=_StubBuilder())
+    result = p.create_skill("create a skill named rejected", auto_confirm=True)
+    assert result["status"] == STATUS_REGISTRATION_FAILED
+    assert result["success"] is False
+    assert "RegistryError: nope" in result["errors"][0]
+
+
+def test_create_skill_qa_failed_still_reports_registration(temp_registry):
+    p = NewSkillPipeline(registry=temp_registry, qa=_StubQA())
+    result = p.create_skill("create a skill named qafail", auto_confirm=True)
+    assert result["status"] == STATUS_QA_FAILED
+    assert result["success"] is False
+    assert result["skill"] is not None            # registered, then failed QA
+    assert any("smoke test failed" in e for e in result["errors"])
+
+
+def test_create_skill_error_is_captured_not_raised(pipeline, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "analyze_request",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError("kaboom")),
+    )
+    result = pipeline.create_skill("anything", auto_confirm=True)
+    assert result["status"] == STATUS_ERROR
+    assert "ValueError: kaboom" in result["errors"][0]
+
+
+# --- interactive review integration ---------------------------------------
+
+def test_create_skill_cancelled_at_review(pipeline, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    result = pipeline.create_skill("create a skill named nope")
+    assert result["status"] == STATUS_CANCELLED
+    assert result["skill"] is None
+
+
+def test_create_skill_confirmed_at_review(pipeline, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    result = pipeline.create_skill("create a skill named yesplease")
+    assert result["status"] == STATUS_COMPLETED
+
+
+def test_edit_without_a_callback_stops_short_of_registering(pipeline, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "e")
+    result = pipeline.create_skill("create a skill named needsedit")
+    assert result["status"] == STATUS_EDIT_REQUESTED
+    assert result["skill"] is None
+
+
+def test_edit_callback_supplies_a_revised_structure(temp_registry, monkeypatch):
+    seen = []
+
+    def callback(structure):
+        seen.append(structure["name"])
+        return {**structure, "name": "revised", "description": "revised skill"}
+
+    p = NewSkillPipeline(registry=temp_registry, review_callback=callback)
+    # First prompt asks for an edit, every later prompt confirms.
+    answers = iter(["e", "y", "y", "y"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    result = p.create_skill("create a skill named original")
+    assert result["status"] == STATUS_COMPLETED
+    assert result["skill_name"] == "revised"
+    assert seen == ["original"]
+
+
+def test_edit_callback_returning_none_cancels(temp_registry, monkeypatch):
+    p = NewSkillPipeline(registry=temp_registry, review_callback=lambda s: None)
+    monkeypatch.setattr("builtins.input", lambda _: "e")
+    result = p.create_skill("create a skill named abandoned")
+    assert result["status"] == STATUS_CANCELLED
+
+
+def test_edit_rounds_are_bounded(temp_registry, monkeypatch):
+    p = NewSkillPipeline(
+        registry=temp_registry, review_callback=lambda s: dict(s)
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "e")   # always asks to edit
+    result = p.create_skill("create a skill named loopy", max_edit_rounds=2)
+    assert result["status"] == STATUS_CANCELLED
+    assert "edit rounds" in result["errors"][0]
+
+
+# --- version control integration (opt-in) ---------------------------------
+
+def test_version_control_commits_when_a_manager_is_given(pipeline):
+    git = _StubGit()
+    result = pipeline.create_skill(
+        "create a skill named committed", auto_confirm=True, git=git
+    )
+    assert result["status"] == STATUS_COMPLETED
+    assert result["committed"] is True
+    assert "committed" in git.messages[0]
+    assert "Committed to version control." in result["response"]
+
+
+def test_a_failing_version_control_does_not_fail_creation(pipeline):
+    class _Boom:
+        def commit(self, message):
+            raise RuntimeError("git is broken")
+
+    result = pipeline.create_skill(
+        "create a skill named resilient", auto_confirm=True, git=_Boom()
+    )
+    assert result["status"] == STATUS_COMPLETED
+    assert result["committed"] is False
+
+
+# --- statistics -----------------------------------------------------------
+
+def test_creation_statistics_count_each_outcome(pipeline, monkeypatch):
+    pipeline.create_skill("create a skill named statone", auto_confirm=True)
+    pipeline.create_skill("create a skill named statone", auto_confirm=True)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    pipeline.create_skill("create a skill named stattwo")
+    assert pipeline.stats["create_total"] == 3
+    assert pipeline.stats[STATUS_COMPLETED] == 1
+    assert pipeline.stats[STATUS_ALREADY_EXISTS] == 1
+    assert pipeline.stats[STATUS_CANCELLED] == 1

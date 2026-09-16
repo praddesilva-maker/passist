@@ -26,6 +26,16 @@ from .new_skill_pipeline import (  # noqa: F401  (Task 8 vocabulary)
     SKILL_TYPE_FUNCTION,
     SKILL_TYPE_WORKFLOW,
 )
+from .new_skill_pipeline import (  # noqa: F401  (Task 11 creation flow)
+    ALL_STATUSES,
+    STATUS_ALREADY_EXISTS,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_EDIT_REQUESTED,
+    STATUS_ERROR,
+    STATUS_QA_FAILED,
+    STATUS_REGISTRATION_FAILED,
+)
 
 __all__ = [
     "NewSkillPipeline",
@@ -38,4 +48,12 @@ __all__ = [
     "SKILL_TYPE_AGENT",
     "SKILL_TYPE_FUNCTION",
     "SKILL_TYPE_WORKFLOW",
+    "ALL_STATUSES",
+    "STATUS_ALREADY_EXISTS",
+    "STATUS_CANCELLED",
+    "STATUS_COMPLETED",
+    "STATUS_EDIT_REQUESTED",
+    "STATUS_ERROR",
+    "STATUS_QA_FAILED",
+    "STATUS_REGISTRATION_FAILED",
 ]
