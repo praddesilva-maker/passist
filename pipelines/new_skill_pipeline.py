@@ -387,6 +387,59 @@ def _placeholder_literal(type_name: Any) -> str:
     return _PLACEHOLDER_LITERALS.get(str(type_name), "None")
 
 
+def _parameters_from_code(code: str) -> Optional[Dict[str, Dict[str, str]]]:
+    """Derive declared parameters from a hand-written skill's own signature.
+
+    When a caller supplies the implementation, the analysed structure's
+    generated parameters describe a function that was never written. The
+    registry would then advertise a parameter the code does not take (and
+    miss the ones it does), and the skill becomes uncallable through the
+    existing-skill pipeline, which validates against that metadata.
+
+    Returns ``None`` if the code cannot be parsed or defines no entry point,
+    so the caller can fall back to the analysed structure.
+    """
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(code)
+    except SyntaxError:
+        return None
+    functions = [n for n in tree.body if isinstance(n, _ast.FunctionDef)]
+    if not functions:
+        return None
+    by_name = {f.name: f for f in functions}
+    entry = by_name.get("run") or by_name.get("main") or functions[0]
+
+    annotation_types = {
+        "str": "str", "int": "int", "float": "float",
+        "bool": "bool", "list": "list", "dict": "dict",
+    }
+    parameters: Dict[str, Dict[str, str]] = {}
+    args = list(entry.args.args)
+    defaults = list(entry.args.defaults)
+    first_default = len(args) - len(defaults)
+    for index, arg in enumerate(args):
+        if arg.arg in ("self", "cls"):
+            continue
+        declared = "str"
+        annotation = getattr(arg, "annotation", None)
+        if isinstance(annotation, _ast.Name):
+            declared = annotation_types.get(annotation.id, "str")
+        entry_info: Dict[str, str] = {
+            "description": f"Parameter '{arg.arg}' of the supplied implementation.",
+            "type": declared,
+        }
+        if index >= first_default:
+            default_node = defaults[index - first_default]
+            try:
+                entry_info["default"] = _ast.literal_eval(default_node)
+            except (ValueError, SyntaxError):
+                pass
+        parameters[arg.arg] = entry_info
+    return parameters
+
+
 class NewSkillPipeline:
     """Intent-analysis stage of the New Skill Development pipeline.
 
@@ -1078,6 +1131,13 @@ class NewSkillPipeline:
             explicit_code = (request_data or {}).get("code")
             explicit_code = explicit_code if str(explicit_code or "").strip() else None
             code = explicit_code or self.generate_code(structure)
+            if explicit_code:
+                # Describe the code that was actually supplied, not the one
+                # the analyser imagined - otherwise the registry advertises
+                # parameters the implementation does not take.
+                derived = _parameters_from_code(explicit_code)
+                if derived is not None:
+                    structure = {**structure, "parameters": derived}
 
             if not auto_confirm:
                 decision = self._review_skill({**structure, "code": code})

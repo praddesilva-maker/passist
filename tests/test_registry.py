@@ -520,3 +520,54 @@ def test_migration_is_idempotent(tmp_path):
         assert registry.get_skill("ok")["tags"] == ["t"]
     finally:
         registry.close()
+
+
+def test_registry_default_path_follows_the_configured_environment(monkeypatch, tmp_path):
+    """SkillRegistry() consulted a hardcoded path and ignored the project's
+    own configuration, so library and script use wrote to skills/skills.db
+    however the project was configured - and a test that forgets the
+    isolation fixture reached real data.
+
+    Note: no importlib.reload here. Reloading skills.registry rebinds its
+    exception classes, so any other test holding the old SkillNotFoundError
+    stops matching it in an except clause.
+    """
+    from skills.registry import SkillRegistry, _default_db_path
+
+    monkeypatch.setenv("PA_DATABASE_PATH", str(tmp_path / "configured.db"))
+    assert _default_db_path() == str(tmp_path / "configured.db")
+
+    registry = SkillRegistry(git_repo_path=str(tmp_path))
+    try:
+        assert registry.db_path == str(tmp_path / "configured.db")
+    finally:
+        registry.close()
+
+
+def test_registry_honours_the_unprefixed_name_too(monkeypatch, tmp_path):
+    from skills.registry import _default_db_path
+
+    monkeypatch.delenv("PA_DATABASE_PATH", raising=False)
+    monkeypatch.setenv("SKILLS_DB_PATH", str(tmp_path / "legacy.db"))
+    assert _default_db_path() == str(tmp_path / "legacy.db")
+
+
+def test_registry_falls_back_to_the_bundled_path(monkeypatch):
+    from skills.registry import _BUILTIN_DB_PATH, _default_db_path
+
+    monkeypatch.delenv("PA_DATABASE_PATH", raising=False)
+    monkeypatch.delenv("SKILLS_DB_PATH", raising=False)
+    assert _default_db_path() == _BUILTIN_DB_PATH
+
+
+def test_an_explicit_db_path_still_wins(monkeypatch, tmp_path):
+    from skills.registry import SkillRegistry
+
+    monkeypatch.setenv("PA_DATABASE_PATH", str(tmp_path / "ignored.db"))
+    registry = SkillRegistry(
+        db_path=str(tmp_path / "explicit.db"), git_repo_path=str(tmp_path)
+    )
+    try:
+        assert registry.db_path == str(tmp_path / "explicit.db")
+    finally:
+        registry.close()

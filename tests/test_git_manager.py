@@ -324,24 +324,19 @@ def test_config_prefers_the_pa_prefixed_environment_names(monkeypatch, tmp_path)
     """The test suite redirects shared state with PA_-prefixed variables;
     config.py originally read only the unprefixed names, so anything
     building a Config() under test pointed at the real registry and repo."""
-    import importlib
-
-    import config as config_module
+    from config import _env_first
 
     monkeypatch.setenv("PA_DATABASE_PATH", str(tmp_path / "isolated.db"))
     monkeypatch.setenv("PA_GIT_REPO_PATH", str(tmp_path / "isolated_repo"))
-    importlib.reload(config_module)
+    import config as config_module
     built = config_module.Config()
     assert built.database.db_path == str(tmp_path / "isolated.db")
     assert built.git.repo_path == str(tmp_path / "isolated_repo")
 
 
 def test_config_still_honours_the_unprefixed_names(monkeypatch, tmp_path):
-    import importlib
-
     import config as config_module
 
     monkeypatch.delenv("PA_DATABASE_PATH", raising=False)
     monkeypatch.setenv("SKILLS_DB_PATH", str(tmp_path / "legacy.db"))
-    importlib.reload(config_module)
     assert config_module.Config().database.db_path == str(tmp_path / "legacy.db")

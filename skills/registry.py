@@ -22,9 +22,30 @@ from typing import Any, Dict, List, Optional
 from .models import utcnow_iso
 from .git_manager import GitManager, GitManagerError
 
-DEFAULT_DB_PATH = os.path.join(
+#: Registry location when a caller does not name one.
+#:
+#: Read from the environment rather than hardcoded: ``config.py`` honours
+#: ``PA_DATABASE_PATH``/``SKILLS_DB_PATH``, but only ``main.py`` consulted it,
+#: so ``SkillRegistry()`` and ``MainAgent()`` used inside a library, a script
+#: or a test silently wrote to ``skills/skills.db`` no matter how the project
+#: was configured - which is also how a test that forgets the isolation
+#: fixture reaches real data.
+_BUILTIN_DB_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "skills.db"
 )
+
+
+def _default_db_path() -> str:
+    """The configured registry path, falling back to the bundled location."""
+    for name in ("PA_DATABASE_PATH", "SKILLS_DB_PATH"):
+        value = os.getenv(name)
+        if value:
+            return value
+    return _BUILTIN_DB_PATH
+
+
+#: Retained for callers that import it; prefer :func:`_default_db_path`.
+DEFAULT_DB_PATH = _BUILTIN_DB_PATH
 
 
 class RegistryError(Exception):
@@ -114,11 +135,12 @@ class SkillRegistry:
 
     def __init__(
         self,
-        db_path: str = DEFAULT_DB_PATH,
+        db_path: Optional[str] = None,
         git_repo_path: Optional[str] = None,
         auto_commit: bool = True,
         versioned_skills_dir: Optional[str] = None,
     ) -> None:
+        db_path = db_path or _default_db_path()
         self.db_path = db_path
         self.git_repo_path = git_repo_path or os.path.dirname(os.path.abspath(db_path))
         self.auto_commit = auto_commit

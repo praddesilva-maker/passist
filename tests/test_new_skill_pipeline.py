@@ -1023,3 +1023,87 @@ def test_creation_statistics_count_each_outcome(pipeline, monkeypatch):
     assert pipeline.stats[STATUS_COMPLETED] == 1
     assert pipeline.stats[STATUS_ALREADY_EXISTS] == 1
     assert pipeline.stats[STATUS_CANCELLED] == 1
+
+
+# ---------------------------------------------------------------------------
+# Caller-supplied implementations (found while verifying the README's
+# documented `create --code` example, which did not work).
+# ---------------------------------------------------------------------------
+
+from pipelines.new_skill_pipeline import _parameters_from_code  # noqa: E402
+
+_SUPPLIED = 'def run(text: str = "") -> str:\n    return text.upper()\n'
+
+
+def test_parameters_are_derived_from_a_supplied_implementation(pipeline):
+    """The analysed structure describes a function nobody wrote. Registering
+    those parameters alongside hand-written code makes the skill uncallable:
+    the registry advertises `input` while the code takes `text`."""
+    result = pipeline.create_skill(
+        "make shouter",
+        request_data={"name": "shouter", "code": _SUPPLIED},
+        auto_confirm=True,
+    )
+    assert result["status"] == STATUS_COMPLETED
+    assert set(result["structure"]["parameters"]) == {"text"}
+
+
+def test_a_supplied_implementation_is_registered_verbatim(pipeline, temp_registry):
+    pipeline.create_skill(
+        "make shouter",
+        request_data={"name": "shouter", "code": _SUPPLIED},
+        auto_confirm=True,
+    )
+    assert temp_registry.get_skill("shouter")["code"] == _SUPPLIED
+
+
+def test_a_supplied_implementation_is_callable_end_to_end(pipeline, temp_registry):
+    from skills.unified_stage import UnifiedSkillStage
+
+    pipeline.create_skill(
+        "make shouter",
+        request_data={"name": "shouter", "code": _SUPPLIED},
+        auto_confirm=True,
+    )
+    result = UnifiedSkillStage(temp_registry).execute_skill("shouter", {"text": "hi"})
+    assert result["success"] is True
+    assert result["output"] == "HI"
+
+
+@pytest.mark.parametrize(
+    "code, expected",
+    [
+        ("def run(a: int, b: str):\n    return a\n", {"a": "int", "b": "str"}),
+        ("def main(x: float = 1.0):\n    return x\n", {"x": "float"}),
+        ("def helper(flag: bool):\n    return flag\n", {"flag": "bool"}),
+        ("def run(unannotated):\n    return 1\n", {"unannotated": "str"}),
+    ],
+)
+def test_parameters_from_code_reads_the_entry_point(code, expected):
+    derived = _parameters_from_code(code)
+    assert {k: v["type"] for k, v in derived.items()} == expected
+
+
+def test_parameters_from_code_prefers_run_then_main():
+    code = "def other(a: int):\n    return a\n\ndef run(b: str):\n    return b\n"
+    assert set(_parameters_from_code(code)) == {"b"}
+
+
+def test_parameters_from_code_records_defaults():
+    derived = _parameters_from_code("def run(n: int = 7):\n    return n\n")
+    assert derived["n"]["default"] == 7
+
+
+@pytest.mark.parametrize("code", ["def (", "x = 1", ""])
+def test_parameters_from_code_gives_up_gracefully(code):
+    """Unparseable or entry-point-less code falls back to the structure."""
+    assert _parameters_from_code(code) is None
+
+
+def test_generated_skills_still_use_the_analysed_structure(pipeline):
+    """Without supplied code, nothing changes: the structure governs."""
+    result = pipeline.create_skill(
+        "create a skill named generated_one", auto_confirm=True
+    )
+    assert result["status"] == STATUS_COMPLETED
+    assert "input" in result["structure"]["parameters"]
