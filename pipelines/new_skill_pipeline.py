@@ -731,3 +731,113 @@ class NewSkillPipeline:
             "error": None,
         }
 
+    # ------------------------------------------------------------------
+    # Interactive review helpers – Task 10 implementations
+    # ------------------------------------------------------------------
+    def _display_proposed_skill(self, skill: Dict[str, Any]) -> str:
+        """Return a human‑readable string representation of a proposed skill.
+
+        Parameters
+        ----------
+        skill:
+            The dictionary returned by :meth:`_analyze_request` or the
+            helper generation methods.  It is expected to contain at least the
+            keys ``type``, ``name``, ``description``, ``parameters``, ``requires``
+            and ``returns``.
+
+        Returns
+        -------
+        str
+            A multi‑line string that lists each field in a user‑friendly
+            format.  The exact layout is intentionally simple and deterministic
+            to make it easy to test.
+        """
+
+        lines: List[str] = []
+        lines.append(f"Skill type: {skill.get('type', 'unknown')}")
+        lines.append(f"Name: {skill.get('name', '')}")
+        lines.append(f"Description: {skill.get('description', '')}")
+        params = skill.get("parameters", {})
+        if params:
+            lines.append("Parameters:")
+            for name, p in params.items():
+                p_type = p.get("type", "unknown")
+                default = p.get("default")
+                default_str = f" (default={default})" if default is not None else ""
+                lines.append(f"  - {name}: {p_type}{default_str}")
+        else:
+            lines.append("Parameters: None")
+        requires = skill.get("requires", {})
+        if requires:
+            lines.append("Requires:")
+            for key, val in requires.items():
+                lines.append(f"  - {key}: {val}")
+        else:
+            lines.append("Requires: None")
+        returns = skill.get("returns", {})
+        if returns:
+            lines.append("Returns:")
+            for key, val in returns.items():
+                lines.append(f"  - {key}: {val}")
+        else:
+            lines.append("Returns: None")
+        return "\n".join(lines)
+
+    def _ask_confirmation(self) -> Union[bool, str]:
+        """Prompt the user to confirm, edit, or cancel.
+
+        Returns
+        -------
+        bool
+            ``True`` if the user confirms, ``False`` if the user cancels.
+        str
+            ``"edit"`` if the user chooses to edit the proposal.
+        """
+
+        prompt = (
+            "Confirm proposed skill? (y=Yes, n=No, e=Edit, c=Cancel) [y]: "
+        )
+        try:
+            choice = input(prompt).strip().lower()
+        except EOFError:
+            # In non‑interactive contexts treat as cancel
+            return False
+        if not choice:
+            return True
+        if choice in {"y", "yes"}:
+            return True
+        if choice in {"n", "no", "c", "cancel"}:
+            return False
+        if choice == "e" or choice == "edit":
+            return "edit"
+        # Unrecognised input – ask again recursively
+        print("Unrecognised option, please choose again.")
+        return self._ask_confirmation()
+
+    def _review_skill(self, skill: Dict[str, Any]) -> Optional[Union[Dict[str, Any], str]]:
+        """Display the skill and ask the user to confirm, edit, or cancel.
+
+        Parameters
+        ----------
+        skill: dict
+            The proposed skill structure.
+
+        Returns
+        -------
+        dict
+            The original skill dictionary if the user confirms.
+        str
+            ``"edit"`` if the user opts to edit.
+        None
+            ``None`` if the user cancels.
+        """
+
+        print(self._display_proposed_skill(skill))
+        decision = self._ask_confirmation()
+        if decision is True:
+            return skill
+        if decision is False:
+            return None
+        # decision == "edit"
+        return "edit"
+
