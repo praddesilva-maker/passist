@@ -2,11 +2,11 @@
 
 ## 1. Snapshot
 
-  - **Last updated:** 2026-09-16 17:05:00 (AEST)
+  - **Last updated:** 2026-09-16 17:52 (AEST)
   - **State:** RUNNING
     - **Current task:** Task 10 — New Skill Pipeline — Interactive Review (repaired & verified)
-    - **Doing right now:** Final verification complete; recording the repair in status and committing.
-    - **Next action:** Commit repair + Task 10 tests + status; then start Task 11 (Testing & Registration, guide lines 3001—3145).
+    - **Doing right now:** Repairing the `status.md` committed by `46d4db3` — it was truncated at 197 lines (sections 6–8 missing, §5 bullets duplicated, SHA not recorded). Rebuilding from the `8bbdb64` copy.
+    - **Next action:** Commit the docs repair, then start Task 11 (Testing & Registration, guide lines 3001–3145).
 
 ## 2. Task Board
 
@@ -47,6 +47,9 @@ guide slice before being marked `DONE`.
 | 23 | Main Agent — Memory Management | REVIEW | passing | no | |
 | 24 | Main Agent — Entry Point | REVIEW | passing | no | `main.py` (269 lines) |
 | 25 | Complete System QA Testing | BLOCKED | passing | no | `skills/qa_skill.py` exists; all 7 QA tests error |
+
+## 3. Current Task Detail
+
  - **Objective (Task 10, guide lines 2779—3000):** Interactive review of the proposed skill before it is registered. — **REPAIRED & VERIFIED 2026-09-16:**
    - [x] Working-tree copy of `pipelines/new_skill_pipeline.py` was **corrupted** (broken `_derive_description_from_request`, mangled helpers); restored from `584323b`, the last good commit (the HEAD copy was also corrupted; broken copy kept at `/tmp/nsp_worktree_broken.py`).
    - [x] Latent typing defect fixed: the review helpers annotate `List` / `Union` but the import was `from typing import Any, Dict, Optional`; now `Any, Dict, List, Optional, Union`. Verified via import, `get_type_hints` evaluation and `py_compile`.
@@ -191,8 +194,121 @@ guide slice before being marked `DONE`.
 - **Branch:** `recovery/repair-and-runbook` (branched from `main`)
 - **`main` is unchanged** — it still points at `f6a30a8`. Merge or fast-forward
   when you have reviewed the branch. Nothing was pushed.
-- **Last commit before Task 10 repair:** `8bbdb64` — "feat(task-10): update interactive review status to DONE and implement helpers" (2026-09-16; its pipeline copy was later found corrupted)
-- **Task 10 repair commit:** `fix(task-10): repair new skill pipeline and add review helper tests` — committed with this status update (restores pipeline from `584323b`, fixes the typing import, adds 19 review-helper tests, updates `RUNBOOK.md` row 10)
-- **Last commit before Task 10 repair:** `8bbdb64` — "feat(task-10): update interactive review status to DONE and implement helpers" (2026-09-16; its pipeline copy was later found corrupted)
-- **Task 10 repair commit:** `fix(task-10): repair new skill pipeline and add review helper tests` — committed with this status update (restores pipeline from `584323b`, fixes the typing import, adds 19 review-helper tests, updates `RUNBOOK.md` row 10)
-- **Uncommitted files:** `status.md` (this report) + `RUNBOOK.md` (row 10 notes) until the Task 10 commit lands. Only `_probe.txt`, `_probe2.txt`, `_probe3.txt` remain untracked — scratch files, deletion is queued as a Carry-Forward Note against Task 0/26. A `.coverage` artifact is covered by `.gitignore`.
+- **Last commit before Task 10 repair:** `8bbdb64` — "feat(task-10): update interactive review status to DONE and implement helpers" (2026-09-16 14:15; its pipeline copy was later found corrupted)
+- **Task 10 repair commit:** `46d4db3` — "fix(task-10): repair new skill pipeline and add review helper tests" (2026-09-16 17:13). Restores the pipeline from `584323b`, fixes the typing import, adds 19 review-helper tests, updates `RUNBOOK.md` row 10.
+- **Known defect fixed in this report:** the `status.md` committed by `46d4db3` was truncated at 197 lines — sections 6–8 missing, §5 bullets duplicated, and the `46d4db3` SHA itself not recorded. Restored from the `8bbdb64` copy, §5 deduplicated, real SHAs recorded, committed as a separate docs commit (Task 10 code work already landed in `46d4db3`, so no amend).
+- **Working tree:** clean after `46d4db3`; only `_probe.txt`, `_probe2.txt`, `_probe3.txt` remain untracked — scratch files, deletion is queued as a Carry-Forward Note against Task 0/26. A `.coverage` artifact is covered by `.gitignore`.
+
+### Commits on this branch (newest first)
+
+| SHA | Commit | Contents |
+|---|---|---|
+| `46d4db3` | `fix(task-10): repair new skill pipeline and add review helper tests` | pipeline restored from `584323b`, typing import fixed, +19 review-helper tests, `RUNBOOK.md` row 10 |
+| `8bbdb64` | `feat(task-10): update interactive review status to DONE and implement helpers` | review helpers in pipeline, `status.md`, `RUNBOOK.md` |
+| `584323b` | `feat(task-10): mark interactive review as DONE and update status` | `status.md` only |
+| `32496ed` | `feat(task-10): add interactive review helpers` | `pipelines/new_skill_pipeline.py` (+110) |
+| `8fea6d1` | `feat(task-9): implement code generation helpers for function, agent, and workflow skills` | `pipelines/new_skill_pipeline.py` (+95) |
+| `681a6b4` | `feat(task-9): add code-generation helpers and update docs` | `RUNBOOK.md`, `status.md` |
+| `0f68c80` | `Add initial project structure and implement skill registry functionality` | pipeline, tests, project structure |
+| `b989c35` | `docs(status): close task 7 — intent analysis verified, suite green, 100% coverage` | `status.md` |
+| `e4e9565` | `feat(task-7): new skill pipeline intent analysis` | `pipelines/__init__.py`, `pipelines/new_skill_pipeline.py`, `tests/test_new_skill_pipeline.py` (+528) |
+| `09ca24e` | `docs(status): close task 6 — DoD verified, suite green, 82% coverage` | `status.md` |
+| `d159245` | `test(task-6): fix test bugs and whitespace in restored unified stage tests` | `tests/test_unified_stage.py` |
+| `8b8875d` | `feat(task-6): restore unified stage test suite (registry, loading, integration, QA)` | `tests/test_unified_stage.py` (+350) |
+| `2a1480a` | `docs(status): record the four recovery commits and clean tree` | `status.md` |
+| `1c67fdb` | `docs: add runbook, status reporting and agent workflow rules` | 5 files |
+| `890471e` | `test: add pytest suite with isolated offline fixtures` | 7 files |
+| `6050ecc` | `feat: implement registry, unified stage, skill builder and main agent` | 12 files |
+| `a0caef6` | `chore: add .gitignore and stop tracking build artifacts` | `.gitignore` |
+
+**Note on commit granularity:** the original implementation and the 2026-09-16
+repairs could not be split into separate commits. They occupy the same files and
+the working tree held no snapshot of the state between them. The repairs are
+enumerated in `6050ecc`'s commit body instead.
+
+**Artifacts no longer tracked:** `skills/skills.db` and the `__pycache__` `.pyc`
+files were committed before a `.gitignore` existed. They are untracked as of
+`a0caef6` but remain on disk.
+
+## 6. Blockers & Questions for the Human
+
+1. ~~**`tests/test_unified_stage.py` was deleted — was that intentional?**~~
+   **RESOLVED 2026-09-16:** restored and rewritten against the current API
+   (`register_skill`/`execute_skill`); committed as `8b8875d` + `d159245`.
+
+2. ~~**The `pipelines/` package does not exist.**~~ **RESOLVED 2026-09-16:**
+   build it as separate modules per guide §1.5 —
+   `pipelines/new_skill_pipeline.py` and `pipelines/existing_skill_pipeline.py`,
+   moving routing logic out of `agent/main_agent.py`. Recorded in
+   `RUNBOOK.md` → Resolved Decisions. Unblocks Tasks 7–11, 15–19, 22.
+
+3. **Several files exist that the guide never mentions** — `config.py`,
+   `agent/llm.py`, `skills/models.py`, `skills/git_manager.py` (guide calls for
+   `skills/version_control.py`), `agent/agent_config.py`.
+   - **What I need:** approval to keep them, or direction to rename/merge to
+     match the guide.
+   - **Impact:** affects whether guide §1.9's structure checklist can ever pass.
+   - **Note:** captured in `RUNBOOK.md` → Carry-Forward Notes against Tasks 18,
+     20, 24 and 26, so this does not block progress in the meantime.
+
+## 7. Deviations from the Guide
+
+| Guide §1.5 expects | Actual | Note |
+|---|---|---|
+| `pipelines/` package | **missing entirely** | blocks Tasks 7–11, 15–19 |
+| `qa/qa_test_suite.py` | **missing** | QA logic lives in `skills/qa_skill.py` instead |
+| `skills/version_control.py` | `skills/git_manager.py` | renamed |
+| `agent/agent_config.py` | present, but `config.py` added at root too | duplicated config concern |
+| `tests/test_skills.py` | split into 5 per-module test files | reasonable, but undocumented |
+| `README.md` | **missing** | Task 26 not started |
+| `qa_prompt_template.md` | **missing** | guide §1.5 requires it |
+| — | `agent/llm.py`, `skills/models.py` | extra modules not in the guide |
+| — | `_probe.txt`, `_probe2.txt`, `_probe3.txt` | scratch files, should be deleted |
+
+Also: `skills/skills.db` is present in the working tree. `.gitignore` covers
+`*.db`, but `.gitignore` itself is untracked, so the ignore rules are not yet
+committed.
+
+## 8. Activity Log
+
+- 2026-09-16 01:16:00 — Last file modification by the previous run (`tests/test_agent.py`); no activity after this point
+- 2026-09-16 06:05:12 — External audit: ran `pytest -q` → 17 passed, 10 failed, 25 errors, 1 skipped
+- 2026-09-16 06:06:00 — External audit: isolated root cause A (missing `close()`/`cleanup()`) and root cause B (unescaped braces in `skill_builder.offline_template`)
+- 2026-09-16 06:07:23 — External audit: recorded git state — last commit 2 days old, 21 uncommitted + 9 untracked files
+- 2026-09-16 06:08:00 — External audit: seeded this `status.md` and added Rules 0/0b/0c to `initial.md`
+- 2026-09-16 06:09:00 — Repair session: added `SkillRegistry.close()` and `MainAgent.cleanup()` → all 25 errors cleared
+- 2026-09-16 06:10:00 — Repair session: fixed `offline_template` brace bug → 10 failures cleared (35 problems → 7)
+- 2026-09-16 06:11:00 — Repair session: found and fixed false-success bug in `_handle_develop_skill` (rejected skills reported as registered)
+- 2026-09-16 06:11:30 — Repair session: `create_chat_model` overrides, `OfflineChatModel` returns AIMessage, `handle_request` envelope extended
+- 2026-09-16 06:12:00 — Repair session: corrected `test_registry_missing_skill` (contract contradicted signature and call site)
+- 2026-09-16 06:12:40 — **Test suite GREEN: 27 passed, 1 skipped, 0 failed, 0 errors**
+- 2026-09-16 06:12:50 — Verified end-to-end: invalid skill names rejected, valid names register at v1, offline unknown-intent path returns structured text
+- 2026-09-16 06:18:00 — Created `RUNBOOK.md`: all 27 tasks with exact guide line ranges for per-task context loading
+- 2026-09-16 06:19:00 — Added Rule 0b (runbook loop, auto-continue, stop conditions) to `initial.md`; rules relabelled into reading order
+- 2026-09-16 06:13:04 — Status refreshed. **Work is uncommitted — commit before starting new tasks.**
+- 2026-09-16 06:20:00 — Created `.clinerules/` (workflow + project rules); amended `/data/ProjectTeams/AGENT_OPERATING_RULES.md` §6 to standardise on `status.md`, grandfathering `STATE.md` in BMAD Team / AI-103 / Agentic PMO
+- 2026-09-16 06:21:00 — Branched `recovery/repair-and-runbook` off `main` (house rules §0: agents do not write to `main`)
+- 2026-09-16 06:21:30 — Committed the backlog in 4 labelled commits: `a0caef6`, `6050ecc`, `890471e`, `1c67fdb`. Nothing pushed.
+- 2026-09-16 06:22:10 — Re-ran suite on the committed tree: **27 passed, 1 skipped, 0 failed, 0 errors**. Working tree clean except 3 scratch probe files.
+- 2026-09-16 06:23:10 — Session resumed (Cline). Re-ran `.venv/bin/python -m pytest -q` → **27 passed, 1 skipped in 0.88s**. Reconciled: working tree clean (only 3 untracked probe files), branch `recovery/repair-and-runbook`, last commit `2a1480a`. Old status.md AWAITING_INPUT state cleared.
+- 2026-09-16 06:24:00 — Started Task 6 (Unified Stage — Testing). Confirmed `tests/test_unified_stage.py` is absent; git copy at `f6a30a8` uses stale `add_skill`/3-arg API — will rewrite against current `register_skill`/`execute_skill` API, then run suite + coverage + QA.
+- 2026-09-16 06:35:00 — Rewrote `tests/test_unified_stage.py` (25 tests: registry CRUD/search/versioning, loading of all three skill types, error paths, registry→stage integration, run logging, rollback, offline QA via `SkillQA(llm=None)`).
+- 2026-09-16 06:44:00 — First run: 3 failed / 49 passed. Fixed test-side issues: f-string brace escaping in skill code, error-message assertion (stage validates before the AST loader), `diff_versions` return shape (dict with v1/v2 rows, not ints).
+- 2026-09-16 06:48:00 — **Suite GREEN: 52 passed, 1 skipped, 0 failed, 0 errors** (0.83s).
+- 2026-09-16 06:51:00 — Coverage (Task 6 module scope): 82% total — models 78%, qa_skill 82%, registry 81%, unified_stage 89%. Meets guide >80% requirement.
+- 2026-09-16 06:51:00 — QA demonstration: offline `SkillQA` run over function/agent/workflow skills in a temp registry → statistics, 3× `test_skill`, `validate_skill_structure`, `report()` all success; exit 0.
+- 2026-09-16 06:50:47 — Committed `8b8875d` "feat(task-6): restore unified stage test suite (registry, loading, integration, QA)" (+350).
+- 2026-09-16 06:54:00 — Fixed cosmetic blank-line gap before `test_run_unknown_skill_raises`; re-ran: 52 passed, 1 skipped; `pytest -k unified_stage` → 25 passed.
+- 2026-09-16 06:56:00 — Committed `d159245` "test(task-6): fix test bugs and whitespace in restored unified stage tests".
+- 2026-09-16 07:04:12 — Task 6 marked DONE in `RUNBOOK.md` + board. All DoD items verified (see §3/§4). Moving to Task 7 (New Skill Pipeline — Intent Analysis).
+- 2026-09-16 07:59:00 — Task 7: created `pipelines/` package — `new_skill_pipeline.py` with `_detect_intent()` (LLM-first, deterministic offline fallback, create-before-use keyword precedence), public `detect_intent()` with stats, `handle_request()` routing envelope (intent/success/offline/response/error).
+- 2026-09-16 08:08:00 — Wrote `tests/test_new_skill_pipeline.py` (58 tests: create/use/general phrasings, edge cases, no-false-positive checks, LLM success/failure/unparseable, offline models never invoked, envelope + stats).
+- 2026-09-16 08:17:00 — Final verification: `pytest tests/test_new_skill_pipeline.py -q` → 58 passed; full suite → 110 passed, 1 skipped; `--cov=pipelines` → 100% (70 stmts). Offline demo: create/use/general/empty → create_skill/use_skill/general/general, stats {requests: 4, create_skill: 1, use_skill: 1, general: 2}.
+- 2026-09-16 08:19:00 — Committed `e4e9565` "feat(task-7): new skill pipeline intent analysis" (+528). Task 7 marked DONE in `RUNBOOK.md` + board. Next: Task 8 (guide lines 2296–2549, `analyze_request()` + structure generation).
+- 2026-09-16 22:11 IST - Task 8 IN_PROGRESS: implementing analyze_request() (spec §1.6.2 / §2.2 / §6 lines 503-598, 1315-1353, 2992-3059)
+- 2026-09-16 13:23 — Committed `8fea6d1` "feat(task-9): implement code generation helpers for function, agent, and workflow skills"; committed `681a6b4` (docs). Task 9 marked DONE in `RUNBOOK.md` + board.
+- 2026-09-16 13:31–13:32 — Committed `32496ed` (review helpers) + `584323b` (status), then `8bbdb64` "feat(task-10): update interactive review status to DONE and implement helpers". Task 10 marked DONE in `RUNBOOK.md` + board.
+- 2026-09-16 16:54 — Found the working-tree copy of `pipelines/new_skill_pipeline.py` corrupted (mangled `_derive_description_from_request` + review helpers; HEAD copy corrupted too). Restored from `584323b`; broken copy kept at `/tmp/nsp_worktree_broken.py`.
+- 2026-09-16 17:05 — Fixed the latent typing defect (`List`/`Union` annotations without imports), added 19 review-helper tests to `tests/test_new_skill_pipeline.py` (115 in file), live-verified all five review paths. Full suite: **167 passed, 1 skipped, 0 failed, 0 errors**.
+- 2026-09-16 17:13 — Committed `46d4db3` "fix(task-10): repair new skill pipeline and add review helper tests". **Task 10 DONE.** Next: Task 11 (Testing & Registration, guide lines 3001–3145).
+- 2026-09-16 17:52 — Discovered the `status.md` committed by `46d4db3` was truncated at 197 lines (sections 6–8 missing, §5 bullets duplicated). Rebuilt it from the `8bbdb64` copy, restored sections 6–8, deduplicated §5, recorded real SHAs; committed as a separate docs commit (no amend — Task 10 code work already landed in `46d4db3`).
