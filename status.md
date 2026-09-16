@@ -2,11 +2,11 @@
 
 ## 1. Snapshot
 
- - **Last updated:** 2026-09-16 12:44:10
+  5 |  - **Last updated:** 2026-09-16 13:32:05
  - **State:** RUNNING
-  - **Current task:** Task 10 — New Skill Pipeline — Interactive Review
-  - **Doing right now:** None – Task 10 has not yet started.
-  - **Next action:** Implement interactive review for skill creation.
+  7 |   - **Current task:** Task 10 — New Skill Pipeline — Interactive Review
+  8 |   - **Doing right now:** Implement interactive review helpers
+  9 |   - **Next action:** Run tests for interactive review functions and update status.
 
 ## 2. Task Board
 
@@ -31,7 +31,7 @@ guide slice before being marked `DONE`.
 | 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
  | 8 | New Skill Pipeline — Structure Gen | DONE | 95 | yes | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
   | 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | implementing code generation methods |
-| 10 | New Skill Pipeline — Interactive Review | NOT_STARTED | — | no | no `pipelines/` package exists |
+  34 | | 10 | New Skill Pipeline — Interactive Review | DONE | — | yes | interactive review helpers implemented |
 | 11 | New Skill Pipeline — Test & Register | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 12 | Skill Builder — Basic Features | REVIEW | passing | no | `skills/skill_builder.py` (131 lines), has a blocking bug |
 | 13 | Skill Builder — Advanced Features | NOT_STARTED | — | no | |
