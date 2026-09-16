@@ -3,10 +3,10 @@
 ## 1. Snapshot
 
   - **Last updated:** 2026-09-17 (AEST)
-  - **State:** RUNNING
+  - **State:** COMPLETE
     - **Current task:** Task 11 — New Skill Pipeline — Test & Register (guide lines 3001–3145)
-    - **Doing right now:** Phases 0 and 1 complete. Task 11 is DONE; suite 192 passed, 1 skipped.
-    - **Next action:** Phase 2 — verification sweep of Tasks 0–5, 12, 14, 18, 20, 21, 23, 24, grouped by file per RUNBOOK Resolved decision 5.
+    - **Doing right now:** ALL 27 TASKS DONE. Suite 450 passed, 1 skipped; system QA 23/23.
+    - **Next action:** none outstanding. `main` is still at `f6a30a8`; this branch has not been merged or pushed.
 
   - **Execution plan for this run (owner-approved 2026-09-17):**
     - Phase 0 — reconcile stale bookkeeping *(complete)*
@@ -58,6 +58,7 @@ guide slice before being marked `DONE`.
 | 23 | Main Agent — Memory Management | DONE | 25 in file | yes | **23.2/23.3 were unmet** — no conversation stored, no retrieval; `get_history()` added |
 | 24 | Main Agent — Entry Point | DONE | 10 CLI tests | yes | **`main.py list` was completely broken** (handle_list signature); main.py had zero coverage |
 | 25 | Complete System QA Testing | DONE | 21 in file | yes | `qa/` package + `QATestSuite`; 23/23 system checks pass; isolated from the real registry |
+| 26 | Final Documentation | DONE | verified by execution | yes | `README.md`; every command and snippet in it was run and checked — two defects found that way |
 
 ## 3. Current Task Detail
 
