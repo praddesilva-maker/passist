@@ -350,3 +350,207 @@ def test_qa_verifies_unified_stage(temp_registry):
     assert report["offline"] is True
     assert len(report["recent_runs"]) == 3
     assert all(run["success"] for run in report["recent_runs"])
+
+
+# ----------------------------------------------------------------------
+# Task 4.2/4.3 — load_skill() and the skill-record cache
+# ----------------------------------------------------------------------
+
+
+def test_cache_starts_empty(temp_registry):
+    stage = UnifiedSkillStage(temp_registry)
+    assert stage.cache_stats() == {"hits": 0, "misses": 0, "size": 0}
+
+
+def test_load_skill_caches_records_and_tracks_hits(temp_registry):
+    _register(temp_registry, "cached", "def run():\n    return 1\n")
+    stage = UnifiedSkillStage(temp_registry)
+
+    stage.load_skill("cached")
+    assert stage.cache_stats() == {"hits": 0, "misses": 1, "size": 1}
+
+    stage.load_skill("cached")
+    assert stage.cache_stats() == {"hits": 1, "misses": 1, "size": 1}
+
+    stage.clear_cache()
+    assert stage.cache_stats()["size"] == 0
+    stage.load_skill("cached")
+    assert stage.cache_stats()["misses"] == 2
+
+
+def test_load_skill_missing_raises_not_found(temp_registry):
+    stage = UnifiedSkillStage(temp_registry)
+    with pytest.raises(SkillNotFoundError):
+        stage.load_skill("ghost")
+
+
+def test_load_skill_version_is_a_separate_cache_key(temp_registry):
+    _register(temp_registry, "vhist", "def run():\n    return 'v1'\n")
+    temp_registry.update_skill("vhist", code="def run():\n    return 'v2'\n")
+    stage = UnifiedSkillStage(temp_registry)
+
+    latest = stage._load_function_skill("vhist")
+    pinned = stage.load_skill("vhist", version=1)
+    assert latest.invoke({}) == "v2"
+    assert pinned.invoke({}) == "v1"
+    # Two distinct cache entries: (name, None) and (name, 1).
+    stage.load_skill("vhist")
+    assert stage.cache_stats()["size"] == 2
+
+
+def test_load_skill_missing_version_raises_not_found(temp_registry):
+    _register(temp_registry, "onlyv1", "def run():\n    return 1\n")
+    stage = UnifiedSkillStage(temp_registry)
+    with pytest.raises(SkillNotFoundError):
+        stage.load_skill("onlyv1", version=99)
+
+
+# ----------------------------------------------------------------------
+# Task 5.1 — Function skill loading as a LangChain tool
+# ----------------------------------------------------------------------
+
+
+def test_load_skill_function_type_returns_invocable_tool(temp_registry):
+    _register(
+        temp_registry, "adder2",
+        "def run(a: int, b: int) -> int:\n    return a + b\n",
+        description="Adds two numbers",
+    )
+    stage = UnifiedSkillStage(temp_registry)
+    tool = stage.load_skill("adder2")
+    assert tool.name == "adder2"
+    assert tool.description == "Adds two numbers"
+    assert tool.invoke({"a": 2, "b": 3}) == 5
+
+
+# ----------------------------------------------------------------------
+# Task 5.2 — Agent skill loading (GLM LLM + tools + memory)
+# ----------------------------------------------------------------------
+
+
+def test_load_skill_agent_type_returns_agent_with_memory(temp_registry):
+    _register(
+        temp_registry, "myagent",
+        "def run(input_value: str = ''):\n    return 'agent:' + input_value\n",
+        skill_type="agent",
+    )
+    stage = UnifiedSkillStage(temp_registry)
+    agent = stage.load_skill("myagent")
+    # A compiled LangGraph agent exposes a checkpointer (its "memory").
+    assert agent.checkpointer is not None
+    # Runnable end-to-end offline (no GLM_API_KEY in the test environment;
+    # conftest.py forces GLM_API_KEY="").
+    config = {"configurable": {"thread_id": "t1"}}
+    result = agent.invoke({"messages": [("user", "hi")]}, config=config)
+    assert "messages" in result
+
+
+def test_load_skill_agent_type_with_offline_tools_falls_back_gracefully(temp_registry):
+    _register(temp_registry, "helper_fn", "def run():\n    return 'helped'\n")
+    _register(
+        temp_registry, "toolagent",
+        "def run(input_value: str = ''):\n    return input_value\n",
+        skill_type="agent",
+    )
+    temp_registry.update_skill("toolagent", parameters={"tools": ["helper_fn"]})
+    stage = UnifiedSkillStage(temp_registry)
+    # Must not raise even though a real GLM key is unavailable: offline model
+    # can't bind_tools, so the loader drops to a tool-less agent.
+    agent = stage.load_skill("toolagent")
+    assert agent.checkpointer is not None
+
+
+# ----------------------------------------------------------------------
+# Task 5.3 — Workflow skill loading (LangGraph graph of nodes/edges)
+# ----------------------------------------------------------------------
+
+
+def test_load_skill_workflow_type_defaults_to_single_step(temp_registry):
+    _register(
+        temp_registry, "wf_single",
+        "def run(input_value: str = ''):\n    return 'wf:' + input_value\n",
+        skill_type="workflow",
+    )
+    stage = UnifiedSkillStage(temp_registry)
+    graph = stage.load_skill("wf_single")
+    result = graph.invoke({"input_value": "go"})
+    assert result["wf_single"] == "wf:go"
+
+
+def test_load_skill_workflow_type_chains_declared_steps(temp_registry):
+    _register(temp_registry, "step_a", "def run(x: int = 0):\n    return x + 1\n")
+    _register(temp_registry, "step_b", "def run(x: int = 0):\n    return x * 2\n")
+    _register(
+        temp_registry, "wf_multi",
+        "def run(x: int = 0):\n    return x\n",
+        skill_type="workflow",
+    )
+    temp_registry.update_skill("wf_multi", parameters={"steps": ["step_a", "step_b"]})
+    stage = UnifiedSkillStage(temp_registry)
+    graph = stage.load_skill("wf_multi")
+    result = graph.invoke({"x": 5})
+    assert result["step_a"] == 6
+    # step_b's node re-reads the shared state's "x" key (unchanged by
+    # step_a, which only adds its own output key), so it doubles the
+    # original input rather than chaining step_a's result.
+    assert result["step_b"] == 10
+
+
+def test_load_skill_workflow_step_failure_raises(temp_registry):
+    _register(
+        temp_registry, "wf_broken",
+        "def run(x):\n    return x\n",
+        skill_type="workflow",
+    )
+    stage = UnifiedSkillStage(temp_registry)
+    graph = stage.load_skill("wf_broken")
+    with pytest.raises(SkillExecutionError):
+        graph.invoke({})  # missing required arg "x" -> step execution fails
+
+
+# ----------------------------------------------------------------------
+# Task 5.4 — Error handling for skill loading
+# ----------------------------------------------------------------------
+
+
+def test_load_skill_invalid_type_raises_execution_error(temp_registry, monkeypatch):
+    _register(temp_registry, "weird", "def run():\n    return 1\n")
+    stage = UnifiedSkillStage(temp_registry)
+    # No public registry API can persist an out-of-band type, so exercise the
+    # loader's guard directly against a crafted record.
+    monkeypatch.setattr(
+        stage.registry, "get_skill",
+        lambda name: {"name": "weird", "type": "not-a-real-type", "code": "def run():\n    return 1\n"},
+    )
+    with pytest.raises(SkillExecutionError, match="Invalid skill type"):
+        stage.load_skill("weird")
+
+
+def test_load_skill_not_found_is_skill_not_found_error(temp_registry):
+    stage = UnifiedSkillStage(temp_registry)
+    with pytest.raises(SkillNotFoundError):
+        stage.load_skill("does-not-exist")
+
+# ---------------------------------------------------------------------------
+# Task 4.1's version-controller parameter (escalation resolved 2026-09-17).
+# ---------------------------------------------------------------------------
+
+def test_version_controller_defaults_to_none(temp_registry):
+    from skills.unified_stage import UnifiedSkillStage
+
+    assert UnifiedSkillStage(temp_registry).version_controller is None
+
+
+def test_version_controller_is_held_when_supplied(temp_registry):
+    from skills.unified_stage import UnifiedSkillStage
+
+    sentinel = object()
+    stage = UnifiedSkillStage(temp_registry, version_controller=sentinel)
+    assert stage.version_controller is sentinel
+
+
+def test_registry_is_still_accepted_positionally(temp_registry):
+    """Existing callers pass the registry positionally; that must keep working."""
+    from skills.unified_stage import UnifiedSkillStage
+
+    assert UnifiedSkillStage(temp_registry).registry is temp_registry

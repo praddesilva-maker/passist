@@ -36,8 +36,8 @@ guide slice before being marked `DONE`.
 | 1 | Registry — Database Schema | DONE | 13 in file | yes | FTS auto-sync triggers were missing (Task 1.4); added + 5 schema tests |
 | 2 | Registry — Basic Operations | DONE | 13 in file | yes | sorted LIKE fallback; `id` exposed; `list_skills` type/tag filtering + `tags` column |
 | 3 | Registry — Version Control Ops | DONE | 10 in file | yes | per-version metadata snapshot enables real `compare_versions`; spec-named aliases added |
-| 4 | Unified Stage — Basic | REVIEW | passing | no | `skills/unified_stage.py` (208 lines) |
-| 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
+| 4 | Unified Stage — Basic | DONE | in file | yes | `load_skill()` + caching (4.2/4.3) **did not exist**; implemented. `version_controller` param added |
+| 5 | Unified Stage — Skill Loading | DONE | in file | yes | per-type `_load_function/agent/workflow_skill()` **did not exist**; all three implemented |
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
 | 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
  | 8 | New Skill Pipeline — Structure Gen | DONE | 95 | yes | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
@@ -108,9 +108,15 @@ guide slice before being marked `DONE`.
     match the current `register_skill`/`execute_skill` API)
 - **Files created/modified this task:** `tests/test_unified_stage.py` (25 tests:
   8 registry, 9 loading, 5 integration, 1 QA + extras)
-- **Known deviation:** Task 6.3 lists "Test cache integration" but the guide
-  specifies no cache in the unified stage (Task 4/5 slices); the current
-  `UnifiedSkillStage` has no cache attribute, so no cache test was written.
+- **Known deviation — RETRACTED 2026-09-17.** This previously read: *"Task 6.3
+  lists 'Test cache integration' but the guide specifies no cache in the
+  unified stage (Task 4/5 slices)."* That was a **misreading of the guide**.
+  Task 4.1 requires "Initialize skill cache", Task 4.2 requires "Add skill
+  cache", and Task 4.3 is titled "Add Caching Mechanism" outright. The cache
+  was required all along and simply had not been built. It now exists, scoped
+  to `load_skill()` only — `execute_skill()` still reads the registry on every
+  call, so a long-lived stage cannot serve stale code after a mid-session
+  skill update.
 
 ## 3b. Task 11 — New Skill Pipeline: Testing and Registration (DONE 2026-09-17)
 
