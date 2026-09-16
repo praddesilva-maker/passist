@@ -2,15 +2,11 @@
 
 ## 1. Snapshot
 
-- **Last updated:** 2026-09-16 22:15 IST
-- **State:** RUNNING
-- **Current task:** Task 8 — New Skill Pipeline — Skill Structure Generation (IN_PROGRESS)
-- **Doing right now:** Task 7 closed and committed as `e4e9565`. Implementing
-  `analyze_request()` in `pipelines/new_skill_pipeline.py` — LLM-first with a
-  deterministic offline fallback; name/type/parameters normalization compatible
-  with `skills/registry.py` validation; rewiring `_handle_develop_skill()` to use it.
-- **Next action:** Extend `tests/test_new_skill_pipeline.py`, run the suite +
-  coverage, update RUNBOOK/status, commit as `feat(task-8): ...`.
+ - **Last updated:** 2026-09-16 12:44:10
+ - **State:** RUNNING
+  - **Current task:** Task 10 — New Skill Pipeline — Interactive Review
+  - **Doing right now:** None – Task 10 has not yet started.
+  - **Next action:** Implement interactive review for skill creation.
 
 ## 2. Task Board
 
@@ -33,8 +29,8 @@ guide slice before being marked `DONE`.
 | 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
 | 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
-| 8 | New Skill Pipeline — Structure Gen | IN_PROGRESS | — | no | implementing `analyze_request()` |
-| 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
+ | 8 | New Skill Pipeline — Structure Gen | DONE | 95 | yes | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
+  | 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | implementing code generation methods |
 | 10 | New Skill Pipeline — Interactive Review | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 11 | New Skill Pipeline — Test & Register | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 12 | Skill Builder — Basic Features | REVIEW | passing | no | `skills/skill_builder.py` (131 lines), has a blocking bug |
@@ -51,25 +47,14 @@ guide slice before being marked `DONE`.
 | 23 | Main Agent — Memory Management | REVIEW | passing | no | |
 | 24 | Main Agent — Entry Point | REVIEW | passing | no | `main.py` (269 lines) |
 | 25 | Complete System QA Testing | BLOCKED | passing | no | `skills/qa_skill.py` exists; all 7 QA tests error |
-| 26 | Final Documentation | NOT_STARTED | — | no | no `README.md` in the project |
-
-## 3. Current Task Detail
-
-- **Objective (Task 8, guide lines 2296–2549):** Start next — this section is
-  rewritten when Task 8 begins.
-- **Task 7 (just completed) — Objective:** Create the `pipelines/` package with
-  `NewSkillPipeline._detect_intent()` classifying requests as `create_skill`,
-  `use_skill`, or `general`, LLM-first with a deterministic offline fallback,
-  plus tests covering all intents and the routing envelope.
-- **Definition of Done checklist (Task 7 — all verified 2026-09-16):**
-  - [x] create_skill intent detection implemented and tested (create phrases,
-    no false positives for use/general)
-  - [x] use_skill intent detection implemented and tested (use phrases, no
-    false positives for create/general)
-  - [x] general intent detection implemented and tested (off-topic and empty
-    input → `general`)
-  - [x] All intents working correctly — create-before-use precedence keeps
-    creation requests that mention using another skill classified as `create_skill`
+ - **Objective (Task 9, guide lines 2552–2778):** Generate code for function,
+   agent, and workflow skills.
+ - **Definition of Done checklist (Task 9 — to be defined):**
+   - [ ] Implement `_generate_function_code`.
+   - [ ] Implement `_generate_agent_code`.
+   - [ ] Implement `_generate_workflow_code`.
+   - [ ] Write tests that verify the generated code is syntactically correct.
+   - [ ] Run the full test suite and ensure all tests pass.
   - [x] All tests passing (100% pass rate) — 58 passed in
     `tests/test_new_skill_pipeline.py`, 0 failed
   - [x] No errors — full suite green: 110 passed, 1 skipped
