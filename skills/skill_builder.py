@@ -28,10 +28,18 @@ propagating.
 """
 
 import difflib
+import json
 import re
+import sqlite3
 from typing import Any, Callable, Dict, List, Optional
 
 from .registry import RegistryError, SkillNotFoundError, SkillRegistry
+
+#: Errors the builder converts into structured payloads rather than raising.
+#: Task 13.4 requires handling database errors specifically - those surface
+#: as ``sqlite3.Error``, which is *not* a ``RegistryError``, so catching only
+#: the latter would let a locked or corrupt database escape as a traceback.
+BUILDER_ERRORS = (RegistryError, sqlite3.Error, OSError)
 
 # Canonical parameter types (kept in sync with
 # ``pipelines/new_skill_pipeline.PARAMETER_TYPES``; duplicated rather than
@@ -90,7 +98,7 @@ class SkillBuilder:
                 examples=examples,
                 note=note,
             )
-        except RegistryError as exc:
+        except BUILDER_ERRORS as exc:
             return {
                 "success": False,
                 "skill_name": name,
@@ -163,7 +171,7 @@ class SkillBuilder:
 
         try:
             skill = self.registry.get_skill(text)
-        except RegistryError as exc:
+        except BUILDER_ERRORS as exc:
             return {
                 "success": False,
                 "skill": None,
@@ -235,7 +243,7 @@ class SkillBuilder:
             updated = self.registry.update_skill(
                 name, description=cleaned, note="description update via builder"
             )
-        except RegistryError as exc:
+        except BUILDER_ERRORS as exc:
             error_payload["error"] = f"{type(exc).__name__}: {exc}"
             return error_payload
 
@@ -365,7 +373,7 @@ class SkillBuilder:
             updated = self.registry.update_skill(
                 name, parameters=params, note=f"parameter {action} via builder"
             )
-        except RegistryError as exc:
+        except BUILDER_ERRORS as exc:
             error_payload["error"] = f"{type(exc).__name__}: {exc}"
             return error_payload
 
@@ -427,7 +435,7 @@ class SkillBuilder:
             updated = self.registry.update_skill(
                 name, code=new_code, note=note or "code update via builder"
             )
-        except RegistryError as exc:
+        except BUILDER_ERRORS as exc:
             error_payload["error"] = f"{type(exc).__name__}: {exc}"
             return error_payload
 
@@ -566,4 +574,304 @@ class SkillBuilder:
             '        "input": input_value,\n'
             '        "result": "OK",\n'
             "    }\n"
+        )
+    # ------------------------------------------------------------------
+    # Task 13.1 — version management
+    # ------------------------------------------------------------------
+
+    def version_history(self, name: str) -> Dict[str, Any]:
+        """Return a skill's version history, newest first (Task 13.1)."""
+        if self.registry.get_skill(name) is None:
+            return {
+                "success": False, "skill_name": name, "versions": [],
+                "error": f"skill '{name}' not found",
+            }
+        try:
+            versions = self.registry.get_version_history(name)
+        except BUILDER_ERRORS as exc:
+            return {
+                "success": False, "skill_name": name, "versions": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "success": True, "skill_name": name, "versions": versions,
+            "current_version": self.registry.get_skill(name).get("current_version"),
+            "error": None,
+        }
+
+    def format_version_history(self, name: str) -> str:
+        """Render a skill's version history for display (Task 13.1)."""
+        result = self.version_history(name)
+        if not result["success"]:
+            return f"Cannot show history: {result['error']}"
+        if not result["versions"]:
+            return f"Skill '{name}' has no recorded versions."
+        current = result.get("current_version")
+        lines = [f"Version history for '{name}':"]
+        for version in result["versions"]:
+            number = version.get("version")
+            marker = "  <- current" if number == current else ""
+            note = str(version.get("note") or "").strip() or "(no note)"
+            lines.append(
+                f"  v{number}  {version.get('created_at', '')}  {note}{marker}"
+            )
+        return "\n".join(lines)
+
+    def compare_versions(self, name: str, v1: int, v2: int) -> Dict[str, Any]:
+        """Compare two versions of a skill (Task 13.1).
+
+        Surfaces the registry's full comparison - code diff, metadata
+        changes and parameter changes - rather than only the code diff.
+        """
+        try:
+            comparison = self.registry.compare_versions(name, v1, v2)
+        except (*BUILDER_ERRORS, SkillNotFoundError) as exc:
+            return {
+                "success": False, "skill_name": name, "diff": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "success": True,
+            "skill_name": name,
+            "diff": comparison["diff"],
+            "metadata_changes": comparison["metadata_changes"],
+            "parameter_changes": comparison["parameter_changes"],
+            "changed": comparison["changed"],
+            "error": None,
+        }
+
+    def format_version_diff(self, name: str, v1: int, v2: int) -> str:
+        """Render a version comparison for display (Task 13.1)."""
+        result = self.compare_versions(name, v1, v2)
+        if not result["success"]:
+            return f"Cannot compare: {result['error']}"
+        if not result["changed"]:
+            return f"v{v1} and v{v2} of '{name}' are identical."
+        lines = [f"Changes in '{name}' from v{v1} to v{v2}:"]
+        for field, change in (result["metadata_changes"] or {}).items():
+            lines.append(f"  {field}: {change['v1']!r} -> {change['v2']!r}")
+        changes = result["parameter_changes"] or {}
+        for label in ("added", "removed", "changed"):
+            names = changes.get(label) or []
+            if names:
+                lines.append(f"  parameters {label}: {', '.join(names)}")
+        if result["diff"]:
+            lines.append("  code:")
+            lines.extend(f"    {line}" for line in result["diff"].splitlines())
+        return "\n".join(lines)
+
+    def rollback(self, name: str, version: int) -> Dict[str, Any]:
+        """Roll a skill back to an earlier version (Task 13.1).
+
+        The registry restores the old code as a *new* version, so history
+        is preserved rather than rewritten.
+        """
+        if self.registry.get_skill(name) is None:
+            return {
+                "success": False, "skill_name": name, "skill": None,
+                "error": f"skill '{name}' not found",
+            }
+        try:
+            restored = self.registry.rollback_to_version(name, version)
+        except (*BUILDER_ERRORS, SkillNotFoundError) as exc:
+            return {
+                "success": False, "skill_name": name, "skill": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "success": True,
+            "skill_name": name,
+            "skill": restored,
+            "restored_from": version,
+            "new_version": restored.get("current_version"),
+            "error": None,
+        }
+
+    # ------------------------------------------------------------------
+    # Task 13.2 — code export / import
+    # ------------------------------------------------------------------
+
+    def export_skill(self, name: str, indent: int = 2) -> Dict[str, Any]:
+        """Export a skill as a portable JSON payload (Task 13.2).
+
+        ``payload`` is the dict and ``json`` its formatted text, so a
+        caller can either re-import the dict directly or write the text to
+        a file.
+        """
+        try:
+            payload = self.registry.export_skill(name)
+        except (*BUILDER_ERRORS, SkillNotFoundError) as exc:
+            return {
+                "success": False, "skill_name": name, "payload": None,
+                "json": None, "error": f"{type(exc).__name__}: {exc}",
+            }
+        return {
+            "success": True,
+            "skill_name": name,
+            "payload": payload,
+            "json": json.dumps(payload, indent=indent, sort_keys=True),
+            "error": None,
+        }
+
+    def import_skill(self, payload: Any) -> Dict[str, Any]:
+        """Import a skill from a payload or JSON text (Task 13.2).
+
+        Accepts either a dict or a JSON string. The payload is validated
+        before anything is written: it must decode to an object, carry a
+        name and code, and pass the registry's own skill validation.
+        """
+        error = {
+            "success": False, "skill_name": None, "skill": None, "error": None,
+        }
+        if isinstance(payload, (str, bytes)):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError) as exc:
+                error["error"] = f"payload is not valid JSON: {exc}"
+                return error
+        if not isinstance(payload, dict):
+            error["error"] = "payload must be a JSON object"
+            return error
+
+        name = str(payload.get("name") or "").strip()
+        code = payload.get("code") or ""
+        error["skill_name"] = name or None
+        if not name:
+            error["error"] = "payload is missing 'name'"
+            return error
+        if not str(code).strip():
+            error["error"] = "payload is missing 'code'"
+            return error
+
+        try:
+            compile(code, f"<import:{name}>", "exec")
+        except SyntaxError as exc:
+            error["error"] = f"SyntaxError: {exc}"
+            return error
+
+        validation = self.registry.validate_skill(
+            {
+                "name": name,
+                "type": payload.get("type", "function"),
+                "code": code,
+            }
+        )
+        if not validation["valid"]:
+            error["error"] = "; ".join(validation["errors"])
+            return error
+
+        try:
+            skill = self.registry.import_skill(payload)
+        except BUILDER_ERRORS as exc:
+            error["error"] = f"{type(exc).__name__}: {exc}"
+            return error
+        return {
+            "success": True, "skill_name": name, "skill": skill, "error": None,
+        }
+
+    # ------------------------------------------------------------------
+    # Task 13.3 — skill templates
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _function_template(ident: str, desc: str) -> str:
+        return (
+            f'"""{desc}"""'
+            "\n\n"
+            'def run(input_value: str = "") -> str:\n'
+            f'    """{ident}: transform the input and return a result."""\n'
+            "    return str(input_value)\n"
+        )
+
+    @staticmethod
+    def _agent_template(ident: str, desc: str) -> str:
+        return (
+            f'"""{desc}"""'
+            "\n\n"
+            'def run(question: str = "") -> dict:\n'
+            f'    """{ident}: answer a question.\n'
+            "\n"
+            "    The unified stage supplies the model and tools when this\n"
+            "    skill is loaded as an agent; this body is the offline,\n"
+            "    dependency-free default so the skill always executes.\n"
+            '    """\n'
+            "    return {\n"
+            f'        "skill": "{ident}",\n'
+            '        "question": question,\n'
+            '        "answer": "",\n'
+            "    }\n"
+        )
+
+    @staticmethod
+    def _workflow_template(ident: str, desc: str) -> str:
+        return (
+            f'"""{desc}"""'
+            "\n\n"
+            "STEPS = (\"prepare\", \"process\", \"finish\")\n"
+            "\n"
+            'def run(payload: str = "") -> list:\n'
+            f'    """{ident}: run each step in order and collect results."""\n'
+            "    results = []\n"
+            "    for step in STEPS:\n"
+            '        results.append({"step": step, "payload": payload})\n'
+            "    return results\n"
+        )
+
+    #: Template builders by canonical skill type (Task 13.3).
+    TEMPLATES = {
+        "function": "_function_template",
+        "agent": "_agent_template",
+        "workflow": "_workflow_template",
+    }
+
+    @classmethod
+    def available_templates(cls) -> List[str]:
+        """Names of the templates a caller may select (Task 13.3)."""
+        return sorted(cls.TEMPLATES)
+
+    def template_for(
+        self, skill_type: str, name: str, description: str = ""
+    ) -> Dict[str, Any]:
+        """Return template code for ``skill_type`` (Task 13.3).
+
+        Every template produces code that passes
+        :meth:`SkillRegistry.validate_skill` and executes with no network
+        access, so a skill built from one works offline immediately.
+        """
+        builder = self.TEMPLATES.get(str(skill_type or "").strip().lower())
+        if builder is None:
+            return {
+                "success": False, "skill_type": skill_type, "code": None,
+                "error": (
+                    f"unknown template {skill_type!r}; choose one of: "
+                    + ", ".join(self.available_templates())
+                ),
+            }
+        ident = re.sub(r"\W", "_", _sanitize_name(name)) or "new_skill"
+        code = getattr(self, builder)(ident, _sanitize_description(description))
+        return {
+            "success": True, "skill_type": skill_type, "code": code,
+            "error": None,
+        }
+
+    def create_from_template(
+        self,
+        name: str,
+        skill_type: str = "function",
+        description: str = "",
+        **register_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Register a new skill built from a template (Task 13.3)."""
+        template = self.template_for(skill_type, name, description)
+        if not template["success"]:
+            return {
+                "success": False, "skill_name": name, "skill": None,
+                "error": template["error"],
+            }
+        return self.register(
+            name=name,
+            code=template["code"],
+            skill_type=skill_type,
+            description=description,
+            **register_kwargs,
         )

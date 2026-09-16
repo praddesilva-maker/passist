@@ -554,3 +554,208 @@ def test_complete_workflow_via_interactive_session(temp_registry):
     assert final["parameters"]["flag"] == {"type": "bool", "description": "a flag"}
     assert final["code"] == new_code
     assert final["current_version"] == 4  # register + description + parameter + code
+
+
+# ===========================================================================
+# Task 13 (guide §1.8.14): advanced features — version management, code
+# export/import, skill templates, and robust error handling.
+# ===========================================================================
+
+import json as _json
+
+from skills.unified_stage import UnifiedSkillStage
+
+
+@pytest.fixture
+def builder(temp_registry):
+    return SkillBuilder(temp_registry)
+
+
+# --- 13.1 version management ---------------------------------------------
+
+@pytest.fixture
+def versioned(builder):
+    builder.create_from_template("vers", skill_type="function", description="first")
+    builder.edit_description("vers", "second description")
+    builder.edit_code(
+        "vers", 'def run(input_value: str = "") -> str:\n    return input_value.upper()\n'
+    )
+    return builder
+
+
+def test_version_history_lists_newest_first(versioned):
+    result = versioned.version_history("vers")
+    assert result["success"] is True
+    assert [v["version"] for v in result["versions"]] == [3, 2, 1]
+    assert result["current_version"] == 3
+
+
+def test_version_history_of_a_missing_skill(builder):
+    result = builder.version_history("ghost")
+    assert result["success"] is False
+    assert "not found" in result["error"]
+
+
+def test_format_version_history_marks_the_current_version(versioned):
+    rendered = versioned.format_version_history("vers")
+    assert "v3" in rendered and "<- current" in rendered
+    assert rendered.index("v3") < rendered.index("v1")     # newest first
+
+
+def test_format_version_history_of_a_missing_skill(builder):
+    assert "Cannot show history" in builder.format_version_history("ghost")
+
+
+def test_compare_versions_surfaces_metadata_and_code(versioned):
+    result = versioned.compare_versions("vers", 1, 3)
+    assert result["success"] is True
+    assert result["changed"] is True
+    assert result["metadata_changes"]["description"]["v2"] == "second description"
+    assert "upper()" in result["diff"]
+
+
+def test_compare_identical_versions_reports_no_change(builder):
+    builder.create_from_template("same", skill_type="function")
+    result = builder.compare_versions("same", 1, 1)
+    assert result["changed"] is False
+
+
+def test_format_version_diff_renders_each_kind_of_change(versioned):
+    rendered = versioned.format_version_diff("vers", 1, 3)
+    assert "description:" in rendered
+    assert "code:" in rendered
+
+
+def test_format_version_diff_on_identical_versions(builder):
+    builder.create_from_template("same2", skill_type="function")
+    assert "identical" in builder.format_version_diff("same2", 1, 1)
+
+
+def test_rollback_preserves_history_as_a_new_version(versioned):
+    result = versioned.rollback("vers", 1)
+    assert result["success"] is True
+    assert result["restored_from"] == 1
+    assert result["new_version"] == 4                     # history not rewritten
+    assert versioned.get_code("vers")["code"] == versioned.registry.get_version(
+        "vers", 1
+    )["code"]
+
+
+def test_rollback_to_a_nonexistent_version(versioned):
+    result = versioned.rollback("vers", 99)
+    assert result["success"] is False
+    assert "99" in result["error"]
+
+
+def test_rollback_of_a_missing_skill(builder):
+    assert builder.rollback("ghost", 1)["success"] is False
+
+
+# --- 13.2 export / import -------------------------------------------------
+
+def test_export_returns_both_payload_and_json(builder):
+    builder.create_from_template("exp", skill_type="function", description="d")
+    result = builder.export_skill("exp")
+    assert result["success"] is True
+    assert result["payload"]["name"] == "exp"
+    assert _json.loads(result["json"])["name"] == "exp"   # json is valid + formatted
+
+
+def test_export_of_a_missing_skill(builder):
+    assert builder.export_skill("ghost")["success"] is False
+
+
+def test_export_then_import_round_trips(builder):
+    builder.create_from_template("orig", skill_type="function", description="d")
+    payload = dict(builder.export_skill("orig")["payload"])
+    payload["name"] = "copy"
+    result = builder.import_skill(payload)
+    assert result["success"] is True
+    assert builder.registry.get_skill("copy")["code"] == (
+        builder.registry.get_skill("orig")["code"]
+    )
+
+
+def test_import_accepts_json_text(builder):
+    builder.create_from_template("orig2", skill_type="function")
+    payload = dict(builder.export_skill("orig2")["payload"])
+    payload["name"] = "from_text"
+    assert builder.import_skill(_json.dumps(payload))["success"] is True
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ("{not json", "not valid JSON"),
+        ([1, 2, 3], "must be a JSON object"),
+        ({"code": "def run(): pass"}, "missing 'name'"),
+        ({"name": "x"}, "missing 'code'"),
+        ({"name": "x", "code": "def ("}, "SyntaxError"),
+    ],
+)
+def test_import_validates_before_writing(builder, payload, expected):
+    result = builder.import_skill(payload)
+    assert result["success"] is False
+    assert expected in result["error"]
+
+
+def test_a_rejected_import_writes_nothing(builder):
+    builder.import_skill({"name": "rejected", "code": "def ("})
+    assert builder.registry.get_skill("rejected") is None
+
+
+# --- 13.3 templates -------------------------------------------------------
+
+def test_available_templates_covers_every_canonical_type(builder):
+    assert builder.available_templates() == ["agent", "function", "workflow"]
+
+
+@pytest.mark.parametrize("skill_type", ["function", "agent", "workflow"])
+def test_every_template_registers_and_executes(temp_registry, skill_type):
+    """A template is only useful if the skill it produces actually runs."""
+    builder = SkillBuilder(temp_registry)
+    name = f"tpl_{skill_type}"
+    assert builder.create_from_template(
+        name, skill_type=skill_type, description="a templated skill"
+    )["success"] is True
+    result = UnifiedSkillStage(temp_registry).execute_skill(name, {})
+    assert result["success"] is True, result["error"]
+
+
+def test_unknown_template_is_rejected_with_the_valid_choices(builder):
+    result = builder.template_for("nonsense", "x")
+    assert result["success"] is False
+    assert "function" in result["error"] and "workflow" in result["error"]
+
+
+def test_create_from_an_unknown_template_registers_nothing(builder):
+    assert builder.create_from_template("x", skill_type="nonsense")["success"] is False
+    assert builder.registry.get_skill("x") is None
+
+
+def test_template_code_is_syntactically_valid(builder):
+    for skill_type in builder.available_templates():
+        code = builder.template_for(skill_type, "probe", "desc")["code"]
+        compile(code, "<template>", "exec")
+
+
+# --- 13.4 error handling --------------------------------------------------
+
+def test_database_errors_become_payloads_not_tracebacks(builder):
+    """Task 13.4 requires handling database errors. Those arrive as
+    sqlite3.Error, which is not a RegistryError - catching only the latter
+    would let a locked or corrupt database escape as a traceback."""
+    import sqlite3
+
+    class _BrokenRegistry:
+        def get_skill(self, name):
+            return {"name": name, "type": "function", "code": "", "current_version": 1}
+
+        def get_version_history(self, name):
+            raise sqlite3.OperationalError("database is locked")
+
+    broken = SkillBuilder.__new__(SkillBuilder)
+    broken.registry = _BrokenRegistry()
+    result = broken.version_history("anything")
+    assert result["success"] is False
+    assert "database is locked" in result["error"]

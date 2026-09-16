@@ -45,8 +45,8 @@ guide slice before being marked `DONE`.
  | 10 | New Skill Pipeline — Interactive Review | DONE | 115 in file | yes | repaired 2026-09-16: pipeline restored from `584323b` (HEAD copy corrupted), typing import fixed, 19 review-helper tests added |
 | 11 | New Skill Pipeline — Test & Register | DONE | 140 in file | yes | `create_skill()` + `generate_code()`; 7 terminal statuses; opt-in git; 25 tests added; suite 192 passed; `pipelines/` 95% |
 | 12 | Skill Builder — Basic Features | DONE | 44 in file | yes | **12.1-12.4 did not exist** (status previously said "has a blocking bug" — it undersold a missing feature); implemented + 44 tests, 93% file coverage |
-| 13 | Skill Builder — Advanced Features | NOT_STARTED | — | no | |
-| 14 | Skill Builder — Testing & Integration | BLOCKED | passing | no | 14.2/14.3 met and tested; **14.1 requires testing Task 13 features that do not exist yet** — blocked on Task 13, not on a defect |
+| 13 | Skill Builder — Advanced Features | DONE | 29 in file | yes | version mgmt, export/import, 3 templates (all execute), widened error handling; 92% file coverage |
+| 14 | Skill Builder — Testing & Integration | DONE | 82 in file | yes | unblocked by Task 13; 14.1/14.2/14.3 all verified |
 | 15 | Existing Skill Pipeline — Search | DONE | 13 in file | yes | `find_skills()`, lexical relevance ranking, `display_results()`, `suggest()` |
 | 16 | Existing Skill Pipeline — Execution | DONE | 7 in file | yes | per-type execution + dispatcher; delegates loading to `UnifiedSkillStage` |
 | 17 | Existing Skill Pipeline — NL Parsing | DONE | 19 in file | yes | LLM-first parsing + deterministic fallback; `validate_params()` type coercion |
