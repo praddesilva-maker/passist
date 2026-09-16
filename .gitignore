@@ -19,3 +19,6 @@ htmlcov/
 # listed here explicitly so a recreated venv is covered either way)
 .venv/
 venv/
+
+# Per-version skill code the registry regenerates; the DB is the source of truth.
+skills/versioned_skills/
