@@ -2,11 +2,22 @@
 
 ## 1. Snapshot
 
-  - **Last updated:** 2026-09-16 17:52 (AEST)
+  - **Last updated:** 2026-09-17 (AEST)
   - **State:** RUNNING
-    - **Current task:** Task 10 — New Skill Pipeline — Interactive Review (repaired & verified)
-    - **Doing right now:** Repairing the `status.md` committed by `46d4db3` — it was truncated at 197 lines (sections 6–8 missing, §5 bullets duplicated, SHA not recorded). Rebuilding from the `8bbdb64` copy.
-    - **Next action:** Commit the docs repair, then start Task 11 (Testing & Registration, guide lines 3001–3145).
+    - **Current task:** Task 11 — New Skill Pipeline — Test & Register (guide lines 3001–3145)
+    - **Doing right now:** Phase 0 reconcile complete — stale runbook/status rows corrected (4 in `RUNBOOK.md`, 5 here). Next: implement `create_skill()`.
+    - **Next action:** Phase 1 — implement `create_skill()` on the existing helpers, fix the two defects found in the uncommitted helper code, add tests, commit.
+
+  - **Execution plan for this run (owner-approved 2026-09-17):**
+    - Phase 0 — reconcile stale bookkeeping *(complete)*
+    - Phase 1 — Task 11: `create_skill()` + tests
+    - Phase 2 — verification sweep, Tasks 0–5, 12, 14, 18, 20, 21, 23, 24, **grouped by file** (see RUNBOOK Resolved decision 5)
+    - Phase 3 — Tasks 15, 16, 17, 19: `pipelines/existing_skill_pipeline.py` + tests
+    - Phase 4 — Tasks 13, 22, 25, 26: builder advanced features, agent wiring, system QA, docs
+
+  - **Defects found in the uncommitted Task 11 helper code (to fix in Phase 1):**
+    1. `_register_skill`'s `except SkillAlreadyExistsError` branch is **dead code** — `SkillBuilder.register()` catches `RegistryError` and returns `{"success": False, ...}` rather than raising, so a duplicate name is misclassified `registration_failed` instead of `already_exists`. Detect the duplicate from the returned payload.
+    2. `DEFAULT_QA_INPUT` is hardcoded to `{"input_value": "qa-gate"}`, so the QA gate fails any skill that declares real parameters. Derive the smoke-test input from the structure's `parameters`.
 
 ## 2. Task Board
 
@@ -32,13 +43,13 @@ guide slice before being marked `DONE`.
  | 8 | New Skill Pipeline — Structure Gen | DONE | 95 | yes | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
   | 9 | New Skill Pipeline — Code Gen | DONE | in-file | yes | `8fea6d1`/`681a6b4`; code generation helpers for function/agent/workflow skills implemented |
  | 10 | New Skill Pipeline — Interactive Review | DONE | 115 in file | yes | repaired 2026-09-16: pipeline restored from `584323b` (HEAD copy corrupted), typing import fixed, 19 review-helper tests added |
-| 11 | New Skill Pipeline — Test & Register | NOT_STARTED | — | no | unblocked: `pipelines/` now exists |
+| 11 | New Skill Pipeline — Test & Register | IN_PROGRESS | — | no | helpers `_register_skill`/`_run_qa_gate`/DI-constructor/status-constants exist (uncommitted, untested); `create_skill()` still missing |
 | 12 | Skill Builder — Basic Features | REVIEW | passing | no | `skills/skill_builder.py` (131 lines), has a blocking bug |
 | 13 | Skill Builder — Advanced Features | NOT_STARTED | — | no | |
 | 14 | Skill Builder — Testing & Integration | BLOCKED | passing | no | 3 of 6 tests fail on the same defect |
-| 15 | Existing Skill Pipeline — Search | NOT_STARTED | — | no | no `pipelines/` package exists |
-| 16 | Existing Skill Pipeline — Execution | NOT_STARTED | — | no | no `pipelines/` package exists |
-| 17 | Existing Skill Pipeline — NL Parsing | NOT_STARTED | — | no | no `pipelines/` package exists |
+| 15 | Existing Skill Pipeline — Search | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
+| 16 | Existing Skill Pipeline — Execution | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
+| 17 | Existing Skill Pipeline — NL Parsing | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
 | 18 | Version Control Integration | REVIEW | — | no | `skills/git_manager.py` (153 lines) exists |
 | 19 | Test Existing Skill Pipeline | NOT_STARTED | — | no | |
 | 20 | Main Agent — GLM Integration | REVIEW | passing | no | `agent/llm.py` + `agent/main_agent.py` (533 lines) |
@@ -46,7 +57,7 @@ guide slice before being marked `DONE`.
 | 22 | Main Agent — Pipeline Integration | NOT_STARTED | — | no | `pipelines/` now exists; remains until Task 11 + Tasks 15–17 land |
 | 23 | Main Agent — Memory Management | REVIEW | passing | no | |
 | 24 | Main Agent — Entry Point | REVIEW | passing | no | `main.py` (269 lines) |
-| 25 | Complete System QA Testing | BLOCKED | passing | no | `skills/qa_skill.py` exists; all 7 QA tests error |
+| 25 | Complete System QA Testing | NOT_STARTED | passing | no | `skills/qa_skill.py` exists; its 7 tests now PASS (stale "all 7 error" note corrected 2026-09-17); `qa/` package still missing |
 
 ## 3. Current Task Detail
 
@@ -312,3 +323,4 @@ committed.
 - 2026-09-16 17:05 — Fixed the latent typing defect (`List`/`Union` annotations without imports), added 19 review-helper tests to `tests/test_new_skill_pipeline.py` (115 in file), live-verified all five review paths. Full suite: **167 passed, 1 skipped, 0 failed, 0 errors**.
 - 2026-09-16 17:13 — Committed `46d4db3` "fix(task-10): repair new skill pipeline and add review helper tests". **Task 10 DONE.** Next: Task 11 (Testing & Registration, guide lines 3001–3145).
 - 2026-09-16 17:52 — Discovered the `status.md` committed by `46d4db3` was truncated at 197 lines (sections 6–8 missing, §5 bullets duplicated). Rebuilt it from the `8bbdb64` copy, restored sections 6–8, deduplicated §5, recorded real SHAs; committed as a separate docs commit (no amend — Task 10 code work already landed in `46d4db3`).
+- 2026-09-16 18:20 — Committed 445462c "docs(status): restore missing sections and record Task 10 commit 46d4db3" (repaired status.md: sections 6-8 restored from 8bbdb64, 5 deduplicated, real SHAs recorded). Suite re-verified: **167 passed, 1 skipped, 0 failed, 0 errors**. Started Task 11 (Testing and Registration, guide lines 3001-3145).

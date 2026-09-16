@@ -74,6 +74,14 @@ do not re-litigate them mid-run.
 2. **Commit after every completed task.** Local commits only, never push.
 3. **Auto-continue between tasks**, stopping only on the conditions above.
 4. **`status.md` is mandatory** and must reflect verified reality, never intent.
+5. **Verification tasks may be grouped by file** (decided 2026-09-17). The
+   one-task-at-a-time rule in "The loop" still governs *build* tasks, but the
+   `REVIEW` tasks that share a source file are to be verified together in one
+   pass — re-reading `skills/registry.py` once per task for Tasks 1/2/3 is
+   waste, not discipline. The groups are: {1,2,3} `skills/registry.py`;
+   {4,5} `skills/unified_stage.py`; {12,14} `skills/skill_builder.py`;
+   {20,21,23,24} `agent/` + `main.py`; {0} and {18} stand alone. Each task in a
+   group still gets its own DoD verification and its own board row.
 
 ---
 
@@ -98,13 +106,13 @@ do not mark it `DONE` without verifying it meets that task's stated DoD.
 | 8 | New Skill Pipeline — Skill Structure Generation | `2296-2549` | 254 | pipelines/new_skill_pipeline.py | DONE | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
  | 9 | New Skill Pipeline — Code Generation | `2550-2778` | 229 | pipelines/new_skill_pipeline.py | DONE | pipelines/ package exists; code generation helpers implemented |
 | 10 | New Skill Pipeline — Interactive Review | `2779-3000` | 222 | pipelines/new_skill_pipeline.py + tests | DONE | pipeline restored from 584323b (corrupted at HEAD), typing import fixed, 19 Task 10 review-helper tests added; 115 passed in file (2026-09-16) |
-| 11 | New Skill Pipeline — Testing and Registration | `3001-3145` | 145 | pipelines/new_skill_pipeline.py + tests | NOT_STARTED | pipelines/ package does not exist yet |
+| 11 | New Skill Pipeline — Testing and Registration | `3001-3145` | 145 | pipelines/new_skill_pipeline.py + tests | IN_PROGRESS | pipelines/ exists; creation-flow helpers (_register_skill, _run_qa_gate, DI constructor, status constants) built but uncommitted+untested; create_skill() still missing |
 | 12 | Interactive Skill Builder — Basic Features | `3146-3369` | 224 | skills/skill_builder.py | REVIEW | offline_template brace bug fixed 2026-09-16 |
 | 13 | Interactive Skill Builder — Advanced Features | `3370-3588` | 219 | skills/skill_builder.py | NOT_STARTED |  |
 | 14 | Interactive Skill Builder — Testing and Integration | `3589-3762` | 174 | tests/test_skill_builder.py | REVIEW | passing after 2026-09-16 fixes |
-| 15 | Existing Skill Pipeline — Skill Search | `3763-3982` | 220 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |
-| 16 | Existing Skill Pipeline — Skill Execution | `3983-4211` | 229 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |
-| 17 | Existing Skill Pipeline — Natural Language Parsing | `4212-4432` | 221 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package does not exist yet |
+| 15 | Existing Skill Pipeline — Skill Search | `3763-3982` | 220 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
+| 16 | Existing Skill Pipeline — Skill Execution | `3983-4211` | 229 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
+| 17 | Existing Skill Pipeline — Natural Language Parsing | `4212-4432` | 221 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
 | 18 | Version Control Integration | `4433-4568` | 136 | skills/version_control.py (currently skills/git_manager.py) | REVIEW | named git_manager.py, not version_control.py |
 | 19 | Test Existing Skill Pipeline | `4569-4828` | 260 | tests for existing-skill pipeline | NOT_STARTED |  |
 | 20 | Main Agent — GLM Integration | `4829-5004` | 176 | agent/llm.py, agent/agent_config.py | REVIEW | create_chat_model + OfflineChatModel fixed 2026-09-16 |
