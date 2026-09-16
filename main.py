@@ -149,7 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
 # Command handlers (each returns a process exit code)
 # ---------------------------------------------------------------------------
 
-def handle_list(rt: Dict[str, Any]) -> int:
+def handle_list(rt: Dict[str, Any], args: argparse.Namespace) -> int:
     skills = rt["registry"].list_skills()
     emit(
         {

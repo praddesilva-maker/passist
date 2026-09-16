@@ -202,6 +202,16 @@ class MainAgent:
 
     # ------------------------------------------------------------------
     # Memory
+    #
+    # The guide (PERSONAL_ASSISTANT_GUIDE.md Task 23) asks for
+    # ``langchain.memory.ConversationBufferMemory``.  That module does not
+    # exist in the pinned LangChain 1.x (``langchain-community``, which used
+    # to host it, is not even a dependency here) -- see the Task 23
+    # verification report.  ``_DictMemoryBackend`` / ``_FileMemoryBackend``
+    # below are a deliberate, minimal replacement: a bounded conversation
+    # turn log (this section) plus a plain key/value snapshot
+    # (:meth:`get_memory`), so the agent keeps working fully offline without
+    # a LangChain memory dependency.
     # ------------------------------------------------------------------
 
     def _build_memory(self, memory_backend: Any) -> Any:
@@ -212,12 +222,33 @@ class MainAgent:
         # Assume an object exposing .get / .set
         return memory_backend
 
-    def _remember_action(self, intent: str, skill_name: Optional[str]) -> None:
+    def _remember_action(
+        self,
+        intent: str,
+        skill_name: Optional[str],
+        request: Optional[str] = None,
+        response: Optional[str] = None,
+    ) -> None:
+        """Append one conversation turn to the bounded recent-actions log.
+
+        Storing ``request``/``response`` (in addition to ``intent``/
+        ``skill``) is what makes this history retrievable as an actual
+        conversation via :meth:`get_history`, rather than only an intent
+        audit trail.
+        """
         try:
             actions = self.memory.get(self.MEMORY_KEY_RECENT_ACTIONS, []) or []
             if not isinstance(actions, list):
                 actions = []
-            actions.append({"intent": intent, "skill": skill_name, "at": time.time()})
+            actions.append(
+                {
+                    "intent": intent,
+                    "skill": skill_name,
+                    "request": request,
+                    "response": response,
+                    "at": time.time(),
+                }
+            )
             self.memory.set(
                 self.MEMORY_KEY_RECENT_ACTIONS,
                 actions[-self.RECENT_ACTIONS_LIMIT :],
@@ -230,6 +261,26 @@ class MainAgent:
             return self.memory.snapshot()
         except Exception:
             return {}
+
+    def get_history(self, limit: Optional[int] = None) -> list:
+        """Return recent conversation turns, oldest first.
+
+        Each entry is ``{"intent", "skill", "request", "response", "at"}`` --
+        already the shape a caller (CLI, Cline) can format for display
+        (e.g. ``f"You: {t['request']}\\nAssistant: {t['response']}"``). Size
+        is bounded by :data:`RECENT_ACTIONS_LIMIT` at write time (see
+        :meth:`_remember_action`); ``limit`` further truncates to the most
+        recent N turns for a caller that wants fewer.
+        """
+        try:
+            actions = self.memory.get(self.MEMORY_KEY_RECENT_ACTIONS, []) or []
+            if not isinstance(actions, list):
+                return []
+        except Exception:
+            return []
+        if limit is not None and limit >= 0:
+            return actions[-limit:] if limit else []
+        return list(actions)
 
     # ------------------------------------------------------------------
     # Intent detection
@@ -440,7 +491,15 @@ class MainAgent:
                 ),
             }
         skill_name = result.get("skill_name")
-        self._remember_action(intent, skill_name)
+        # Computed once and reused for both the conversation-history record
+        # (_remember_action) and the response payload below, so "what got
+        # remembered" and "what the caller saw" can never drift apart.
+        response_text = (
+            result.get("message") or result.get("error") or ""
+            if isinstance(result, dict)
+            else str(result)
+        )
+        self._remember_action(intent, skill_name, request=request, response=response_text)
         try:
             self.memory.set(self.MEMORY_KEY_LAST_RESULT, result)
             self.memory.set(
@@ -459,11 +518,7 @@ class MainAgent:
             "skill_name": skill_name,
             "result": result,
             # Human-readable text for the CLI / Cline to surface directly.
-            "response": (
-                result.get("message") or result.get("error") or ""
-                if isinstance(result, dict)
-                else str(result)
-            ),
+            "response": response_text,
             "error": result.get("error") if isinstance(result, dict) else None,
         }
         if include_dev:
@@ -499,14 +554,26 @@ class MainAgent:
                 "error": f"{type(exc).__name__}: {exc}",
             }
         self.stats["skills_used"] += 1
+        succeeded = bool(result.get("success"))
         return {
-            "success": bool(result.get("success")),
+            "success": succeeded,
             "skill_name": name,
             "output": result.get("output"),
             "error": result.get("error"),
             "skill_type": result.get("skill_type"),
             "version": result.get("version"),
             "execution_time_ms": result.get("execution_time_ms"),
+            # Without this, handle_request()'s "response" (the human-readable
+            # text surfaced by the CLI/Cline, and now also stored per-turn by
+            # get_history()) was "" for every successful skill run -- the
+            # single most common outcome -- because it falls back to
+            # result.get("message") or result.get("error") or "", and this
+            # dict had neither key on success.
+            "message": (
+                f"Skill '{name}' executed successfully."
+                if succeeded
+                else (result.get("error") or f"Skill '{name}' execution failed.")
+            ),
         }
 
     def _handle_develop_skill(
