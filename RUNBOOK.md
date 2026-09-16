@@ -96,9 +96,9 @@ do not mark it `DONE` without verifying it meets that task's stated DoD.
 | # | Task | Guide lines | Size | Primary files | Status | Notes |
 |---|------|-------------|------|---------------|--------|-------|
 | 0 | Setup and Foundation | `228-502` | 275 | requirements.txt, .gitignore, venv, package skeletons | IN_PROGRESS |  |
-| 1 | Registry System — Database Schema | `503-774` | 272 | skills/registry.py (schema) | REVIEW |  |
-| 2 | Registry System — Basic Operations | `775-1052` | 278 | skills/registry.py (CRUD) | REVIEW |  |
-| 3 | Registry System — Version Control Operations | `1053-1348` | 296 | skills/registry.py (versions) | REVIEW |  |
+| 1 | Registry System — Database Schema | `503-774` | 272 | skills/registry.py (schema) | DONE | verified 2026-09-17; Task 1.4's required FTS auto-sync triggers were missing entirely (index kept in sync only by a Python-side rebuild, so any raw-SQL write desynced it) — real triggers added; 5 schema tests added |
+| 2 | Registry System — Basic Operations | `775-1052` | 278 | skills/registry.py (CRUD) | DONE | verified 2026-09-17; fixed unsorted LIKE-fallback search (2.4 requires sorted results); exposed row `id`; added `list_skills(skill_type=, tags=)` filtering + a `tags` column to close 2.3 |
+| 3 | Registry System — Version Control Operations | `1053-1348` | 296 | skills/registry.py (versions) | DONE | verified 2026-09-17; `skill_versions` now snapshots description+parameters so `compare_versions` can diff metadata and parameters, not just code (3.3); spec-named aliases `get_skill_history`/`compare_versions` added; git-commit path now has real coverage |
 | 4 | Unified Stage — Basic Implementation | `1349-1578` | 230 | skills/unified_stage.py | REVIEW |  |
 | 5 | Unified Stage — Skill Loading | `1579-1856` | 278 | skills/unified_stage.py (loading) | REVIEW |  |
 | 6 | Unified Stage — Testing | `1857-2070` | 214 | tests/test_unified_stage.py | DONE | restored+rewritten vs current API; 25 tests, suite green, 82% coverage (2026-09-16); commits 8b8875d, d159245 |

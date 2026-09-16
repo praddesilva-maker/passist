@@ -33,9 +33,9 @@ guide slice before being marked `DONE`.
 | # | Task | Status | Tests | Committed | Notes |
 |---|------|--------|-------|-----------|-------|
 | 0 | Setup and Foundation | REVIEW | — | no | venv + requirements.txt present; `.gitignore` untracked |
-| 1 | Registry — Database Schema | REVIEW | passing | no | `skills/registry.py` (745 lines) implemented |
-| 2 | Registry — Basic Operations | REVIEW | passing | no | register/get/list/search present |
-| 3 | Registry — Version Control Ops | REVIEW | passing | no | versions/rollback/diff present |
+| 1 | Registry — Database Schema | DONE | 13 in file | yes | FTS auto-sync triggers were missing (Task 1.4); added + 5 schema tests |
+| 2 | Registry — Basic Operations | DONE | 13 in file | yes | sorted LIKE fallback; `id` exposed; `list_skills` type/tag filtering + `tags` column |
+| 3 | Registry — Version Control Ops | DONE | 10 in file | yes | per-version metadata snapshot enables real `compare_versions`; spec-named aliases added |
 | 4 | Unified Stage — Basic | REVIEW | passing | no | `skills/unified_stage.py` (208 lines) |
 | 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |

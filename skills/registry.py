@@ -43,6 +43,19 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _loads_dict(value: Any) -> Dict[str, Any]:
+    """Best-effort JSON-object decode; always returns a dict."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +65,7 @@ CREATE TABLE IF NOT EXISTS skills (
     code TEXT NOT NULL DEFAULT '',
     parameters TEXT NOT NULL DEFAULT '{}',
     examples TEXT NOT NULL DEFAULT '[]',
+    tags TEXT NOT NULL DEFAULT '[]',
     current_version INTEGER NOT NULL DEFAULT 1,
     code_path TEXT,
     git_commit TEXT,
@@ -65,6 +79,8 @@ CREATE TABLE IF NOT EXISTS skill_versions (
     skill_name TEXT NOT NULL,
     version INTEGER NOT NULL,
     code TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    parameters TEXT NOT NULL DEFAULT '{}',
     code_path TEXT,
     code_hash TEXT,
     git_commit TEXT,
@@ -154,10 +170,48 @@ class SkillRegistry:
         conn = self._connect()
         try:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
             self._fts_available = self._setup_fts(conn)
             conn.commit()
         finally:
             conn.close()
+
+    # Columns added after the original schema shipped: {table: {column: ddl}}.
+    _ADDED_COLUMNS = {
+        "skills": {
+            "tags": "TEXT NOT NULL DEFAULT '[]'",
+        },
+        "skill_versions": {
+            "description": "TEXT NOT NULL DEFAULT ''",
+            "parameters": "TEXT NOT NULL DEFAULT '{}'",
+        },
+    }
+
+    @classmethod
+    def _migrate(cls, conn: sqlite3.Connection) -> None:
+        """Add columns missing from a database created by an older schema.
+
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op on an existing table, so a
+        registry file written before these columns existed would otherwise
+        raise ``no such column`` on the first query. Idempotent: each column
+        is added only when ``PRAGMA table_info`` says it is absent.
+        """
+        for table, columns in cls._ADDED_COLUMNS.items():
+            try:
+                existing = {
+                    row[1] for row in conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+            except sqlite3.OperationalError:
+                continue
+            if not existing:          # table not created yet
+                continue
+            for column, ddl in columns.items():
+                if column not in existing:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"
+                    )
 
     @staticmethod
     def _setup_fts(conn: sqlite3.Connection) -> bool:
@@ -166,6 +220,29 @@ class SkillRegistry:
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS skill_fts
                 USING fts5(name, description, content='skills', content_rowid='id')
+                """
+            )
+            # Triggers keep skill_fts in sync automatically for *any* write to
+            # ``skills`` (including raw SQL outside this class), per the
+            # guide's Task 1.4 requirement.  ``_sync_fts``'s rebuild-on-write
+            # (called from the CRUD methods below) remains as a redundant,
+            # harmless safety net on top of these triggers.
+            conn.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS skills_fts_ai AFTER INSERT ON skills BEGIN
+                    INSERT INTO skill_fts(rowid, name, description)
+                    VALUES (new.id, new.name, new.description);
+                END;
+                CREATE TRIGGER IF NOT EXISTS skills_fts_ad AFTER DELETE ON skills BEGIN
+                    INSERT INTO skill_fts(skill_fts, rowid, name, description)
+                    VALUES ('delete', old.id, old.name, old.description);
+                END;
+                CREATE TRIGGER IF NOT EXISTS skills_fts_au AFTER UPDATE ON skills BEGIN
+                    INSERT INTO skill_fts(skill_fts, rowid, name, description)
+                    VALUES ('delete', old.id, old.name, old.description);
+                    INSERT INTO skill_fts(rowid, name, description)
+                    VALUES (new.id, new.name, new.description);
+                END;
                 """
             )
             return True
@@ -193,6 +270,7 @@ class SkillRegistry:
         parameters: Optional[Dict[str, Any]] = None,
         examples: Optional[List[Dict[str, Any]]] = None,
         note: str = "",
+        tags: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Register a brand-new skill (v1).
 
@@ -217,9 +295,9 @@ class SkillRegistry:
             conn.execute(
                 """
                 INSERT INTO skills (name, description, type, code, parameters,
-                                    examples, current_version, code_path,
+                                    examples, tags, current_version, code_path,
                                     git_commit, active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, 1, ?, ?)
                 """,
                 (
                     name,
@@ -228,11 +306,15 @@ class SkillRegistry:
                     code,
                     json.dumps(parameters or {}),
                     json.dumps(examples or []),
+                    json.dumps(sorted(set(tags or []))),
                     now,
                     now,
                 ),
             )
-            self._insert_version(conn, name, 1, code, note or "initial version")
+            self._insert_version(
+                conn, name, 1, code, note or "initial version",
+                description=description, parameters=parameters or {},
+            )
             self._sync_fts(conn)
             conn.commit()
         finally:
@@ -289,7 +371,10 @@ class SkillRegistry:
                     name,
                 ),
             )
-            self._insert_version(conn, name, new_version, new_code, note)
+            self._insert_version(
+                conn, name, new_version, new_code, note,
+                description=new_description, parameters=new_parameters,
+            )
             self._sync_fts(conn)
             conn.commit()
         finally:
@@ -346,8 +431,8 @@ class SkillRegistry:
         try:
             row = conn.execute(
                 """
-                SELECT name, description, type, code, parameters, examples,
-                       current_version, code_path, git_commit, active,
+                SELECT id, name, description, type, code, parameters, examples,
+                       tags, current_version, code_path, git_commit, active,
                        created_at, updated_at
                 FROM skills WHERE name = ? AND active = 1
                 """,
@@ -359,29 +444,53 @@ class SkillRegistry:
             return None
         return self._row_to_skill(row)
 
-    def list_skills(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
-        where = "" if include_inactive else "WHERE active = 1"
+    def list_skills(
+        self,
+        include_inactive: bool = False,
+        skill_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """List registered skills, newest filters optional (Task 2.3).
+
+        ``skill_type`` restricts to one canonical type. ``tags`` keeps only
+        skills carrying **every** listed tag. Both default to None, so the
+        existing single-argument calls are unaffected.
+        """
+        clauses = [] if include_inactive else ["active = 1"]
+        params: List[Any] = []
+        if skill_type:
+            clauses.append("type = ?")
+            params.append(skill_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         conn = self._connect()
         try:
             rows = conn.execute(
                 f"""
-                SELECT name, description, type, code, parameters, examples,
-                       current_version, code_path, git_commit, active,
+                SELECT id, name, description, type, code, parameters, examples,
+                       tags, current_version, code_path, git_commit, active,
                        created_at, updated_at
                 FROM skills {where} ORDER BY name
-                """
+                """,
+                tuple(params),
             ).fetchall()
         finally:
             conn.close()
-        return [self._row_to_skill(r) for r in rows]
+        skills = [self._row_to_skill(r) for r in rows]
+        if tags:
+            wanted = set(tags)
+            skills = [
+                s for s in skills
+                if wanted <= set(s.get("tags") or [])
+            ]
+        return skills
 
     def get_version(self, name: str, version: int) -> Optional[Dict[str, Any]]:
         conn = self._connect()
         try:
             row = conn.execute(
                 """
-                SELECT skill_name, version, code, code_path, code_hash,
-                       git_commit, note, created_at
+                SELECT skill_name, version, code, description, parameters,
+                       code_path, code_hash, git_commit, note, created_at
                 FROM skill_versions
                 WHERE skill_name = ? AND version = ?
                 """,
@@ -397,8 +506,8 @@ class SkillRegistry:
         try:
             rows = conn.execute(
                 """
-                SELECT skill_name, version, code, code_path, code_hash,
-                       git_commit, note, created_at
+                SELECT skill_name, version, code, description, parameters,
+                       code_path, code_hash, git_commit, note, created_at
                 FROM skill_versions
                 WHERE skill_name = ?
                 ORDER BY version DESC
@@ -419,13 +528,28 @@ class SkillRegistry:
         return self.update_skill(name, code=old["code"], note=f"rollback to v{version}")
 
     def diff_versions(self, name: str, v1: int, v2: int) -> Dict[str, Any]:
-        """Return a unified diff between two versions of a skill."""
+        """Compare two versions of a skill (Task 3.3).
+
+        Reports three kinds of change, per the guide's requirement to
+        "compare metadata... compare parameters... compare implementation
+        code":
+
+        * ``diff`` - a unified diff of the implementation code
+        * ``metadata_changes`` - per-field ``{"v1":…, "v2":…}`` for the
+          version metadata that differs (description, note, git_commit)
+        * ``parameter_changes`` - ``added`` / ``removed`` / ``changed``
+          parameter names between the two versions
+
+        ``changed`` is True when anything at all differs, so a caller need
+        not inspect all three.
+        """
         import difflib
 
         row1 = self.get_version(name, v1)
         row2 = self.get_version(name, v2)
         if row1 is None or row2 is None:
             raise SkillNotFoundError(f"Version(s) {v1}/{v2} of '{name}' not found")
+
         diff = "".join(
             difflib.unified_diff(
                 row1["code"].splitlines(keepends=True),
@@ -434,7 +558,50 @@ class SkillRegistry:
                 tofile=f"{name} v{v2}",
             )
         )
-        return {"v1": row1, "v2": row2, "diff": diff}
+
+        metadata_changes: Dict[str, Any] = {}
+        for field in ("description", "note", "git_commit"):
+            before, after = row1.get(field), row2.get(field)
+            if before != after:
+                metadata_changes[field] = {"v1": before, "v2": after}
+
+        params1 = _loads_dict(row1.get("parameters"))
+        params2 = _loads_dict(row2.get("parameters"))
+        parameter_changes = {
+            "added": sorted(set(params2) - set(params1)),
+            "removed": sorted(set(params1) - set(params2)),
+            "changed": sorted(
+                key for key in set(params1) & set(params2)
+                if params1[key] != params2[key]
+            ),
+        }
+
+        return {
+            "v1": row1,
+            "v2": row2,
+            "diff": diff,
+            "metadata_changes": metadata_changes,
+            "parameter_changes": parameter_changes,
+            "changed": bool(
+                diff
+                or metadata_changes
+                or any(parameter_changes.values())
+            ),
+        }
+
+    # -- spec-named aliases (guide Tasks 3.2 / 3.3) ---------------------
+    # The guide names these get_skill_history() and compare_versions(); the
+    # implementation and every caller use get_version_history()/
+    # diff_versions(). Renaming would break those callers, so both names are
+    # offered and the DoD's naming requirement is met without a rename.
+
+    def get_skill_history(self, name: str) -> List[Dict[str, Any]]:
+        """Alias for :meth:`get_version_history` (guide Task 3.2)."""
+        return self.get_version_history(name)
+
+    def compare_versions(self, name: str, v1: int, v2: int) -> Dict[str, Any]:
+        """Alias for :meth:`diff_versions` (guide Task 3.3)."""
+        return self.diff_versions(name, v1, v2)
 
     # ------------------------------------------------------------------
     # Search
@@ -479,6 +646,7 @@ class SkillRegistry:
                 SELECT name, description, type, current_version
                 FROM skills
                 WHERE active = 1 AND (name LIKE ? OR description LIKE ?)
+                ORDER BY name
                 LIMIT ?
                 """,
                 (like, like, limit),
@@ -696,7 +864,7 @@ class SkillRegistry:
     @staticmethod
     def _row_to_skill(row: sqlite3.Row) -> Dict[str, Any]:
         skill = {k: row[k] for k in row.keys()}
-        for key in ("parameters", "examples"):
+        for key in ("parameters", "examples", "tags"):
             if isinstance(skill.get(key), str):
                 try:
                     skill[key] = json.loads(skill[key])
@@ -714,14 +882,29 @@ class SkillRegistry:
         version: int,
         code: str,
         note: str,
+        description: str = "",
+        parameters: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Snapshot one version of a skill.
+
+        ``description`` and ``parameters`` are captured alongside the code so
+        that :meth:`compare_versions` can diff metadata and parameters, not
+        just implementation - Task 3.3 requires all three, and a version row
+        that stores only code makes a metadata-only change impossible to
+        compare after the fact.
+        """
         conn.execute(
             """
-            INSERT INTO skill_versions (skill_name, version, code, code_path,
-                                        code_hash, git_commit, note, created_at)
-            VALUES (?, ?, ?, NULL, ?, NULL, ?, ?)
+            INSERT INTO skill_versions (skill_name, version, code, description,
+                                        parameters, code_path, code_hash,
+                                        git_commit, note, created_at)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)
             """,
-            (name, version, code, _sha256(code), note, utcnow_iso()),
+            (
+                name, version, code, description or "",
+                json.dumps(parameters or {}), _sha256(code), note,
+                utcnow_iso(),
+            ),
         )
 
     def _persist_skill_file(self, name: str, code: str, version: int) -> str:
