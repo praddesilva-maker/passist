@@ -97,7 +97,7 @@ do not mark it `DONE` without verifying it meets that task's stated DoD.
 | 7 | New Skill Pipeline — Intent Analysis | `2071-2295` | 225 | pipelines/new_skill_pipeline.py | DONE | pipelines/ package created; create_skill/use_skill/general intent detection (LLM-first + deterministic offline fallback); 58 tests, 100% coverage (2026-09-16); commit e4e9565 |
 | 8 | New Skill Pipeline — Skill Structure Generation | `2296-2549` | 254 | pipelines/new_skill_pipeline.py | DONE | analyze_request() LLM-first + deterministic offline fallback; registry-canonical types function/agent/workflow; 95 tests in file, 100% pass (2026-09-16) |
  | 9 | New Skill Pipeline — Code Generation | `2550-2778` | 229 | pipelines/new_skill_pipeline.py | DONE | pipelines/ package exists; code generation helpers implemented |
- | 10 | New Skill Pipeline — Interactive Review | `2779-3000` | 222 | pipelines/new_skill_pipeline.py | DONE | interactive review helpers implemented |
+| 10 | New Skill Pipeline — Interactive Review | `2779-3000` | 222 | pipelines/new_skill_pipeline.py + tests | DONE | pipeline restored from 584323b (corrupted at HEAD), typing import fixed, 19 Task 10 review-helper tests added; 115 passed in file (2026-09-16) |
 | 11 | New Skill Pipeline — Testing and Registration | `3001-3145` | 145 | pipelines/new_skill_pipeline.py + tests | NOT_STARTED | pipelines/ package does not exist yet |
 | 12 | Interactive Skill Builder — Basic Features | `3146-3369` | 224 | skills/skill_builder.py | REVIEW | offline_template brace bug fixed 2026-09-16 |
 | 13 | Interactive Skill Builder — Advanced Features | `3370-3588` | 219 | skills/skill_builder.py | NOT_STARTED |  |

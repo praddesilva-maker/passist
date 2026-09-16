@@ -12,6 +12,11 @@ skill-creation request into a normalized, registry-compatible structure
 (``function`` / ``agent`` / ``workflow`` types) with a deterministic
 fallback when no LLM answer is usable.
 
+Task 10 (guide §1.8.11): interactive review helpers —
+``_display_proposed_skill()``, ``_ask_confirmation()`` (yes / no / edit /
+cancel, with re-prompt on unrecognised input and EOF treated as cancel)
+and ``_review_skill()`` (the display → confirm → decide workflow).
+
 All tests run offline (conftest forces ``GLM_API_KEY`` empty), mirroring the
 agent test conventions.
 """
@@ -624,4 +629,115 @@ def test_vocabulary_exports_are_consistent():
     assert (SKILL_TYPE_FUNCTION, SKILL_TYPE_AGENT, SKILL_TYPE_WORKFLOW) == (
         PKG_FUNCTION, PKG_AGENT, PKG_WORKFLOW,
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 10 (guide §1.8.11): interactive review helpers
+# _display_proposed_skill / _ask_confirmation / _review_skill
+# ---------------------------------------------------------------------------
+
+_REVIEW_SKILL = {
+    "type": "function",
+    "name": "adder",
+    "description": "adds two numbers",
+    "parameters": {
+        "a": {"type": "int", "description": "first addend"},
+        "b": {"type": "int", "default": 1, "description": "second addend"},
+    },
+    "requires": {"math": "1.0"},
+    "returns": {"result": {"type": "int", "description": "sum"}},
+}
+
+
+def test_display_proposed_skill_shows_all_fields():
+    text = NewSkillPipeline()._display_proposed_skill(_REVIEW_SKILL)
+    assert "Skill type: function" in text
+    assert "Name: adder" in text
+    assert "Description: adds two numbers" in text
+    assert "Parameters:" in text
+    assert "  - a: int" in text
+    assert "  - b: int (default=1)" in text
+    assert "Requires:" in text
+    assert "  - math: 1.0" in text
+    assert "Returns:" in text
+    assert "  - result: {'type': 'int', 'description': 'sum'}" in text
+
+
+def test_display_proposed_skill_empty_collections_and_missing_type():
+    text = NewSkillPipeline()._display_proposed_skill(
+        {"name": "bare", "description": "no extras"}
+    )
+    assert "Skill type: unknown" in text
+    assert "Parameters: None" in text
+    assert "Requires: None" in text
+    assert "Returns: None" in text
+
+
+@pytest.mark.parametrize(
+    "answer, expected",
+    [
+        ("y", True),
+        ("yes", True),
+        ("Y", True),            # case-insensitive
+        ("  n  ", False),       # whitespace tolerated
+        ("no", False),
+        ("c", False),
+        ("cancel", False),
+        ("e", "edit"),
+        ("edit", "edit"),
+        ("", True),             # empty answer takes the [y] default
+    ],
+)
+def test_ask_confirmation_every_option(monkeypatch, answer, expected):
+    monkeypatch.setattr("builtins.input", lambda _: answer)
+    assert NewSkillPipeline()._ask_confirmation() is expected
+
+
+def test_ask_confirmation_unrecognised_reprompts_then_succeeds(monkeypatch):
+    answers = iter(["bogus", "y"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert NewSkillPipeline()._ask_confirmation() is True
+
+
+def test_ask_confirmation_unrecognised_then_cancel(monkeypatch):
+    answers = iter(["zzz", "c"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert NewSkillPipeline()._ask_confirmation() is False
+
+
+def test_ask_confirmation_eof_treated_as_cancel(monkeypatch):
+    def raise_eof(_prompt):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", raise_eof)
+    assert NewSkillPipeline()._ask_confirmation() is False
+
+
+@pytest.mark.parametrize(
+    "answer, expected",
+    [
+        ("y", "skill"),       # confirm returns the original dict
+        ("n", "cancel"),      # cancel returns None
+        ("c", "cancel"),
+        ("e", "edit"),        # edit returns the marker string
+    ],
+)
+def test_review_skill_decisions(monkeypatch, answer, expected):
+    monkeypatch.setattr("builtins.input", lambda _: answer)
+    result = NewSkillPipeline()._review_skill(_REVIEW_SKILL)
+    if expected == "skill":
+        assert result is _REVIEW_SKILL
+    elif expected == "cancel":
+        assert result is None
+    else:
+        assert result == "edit"
+
+
+def test_review_skill_displays_the_skill_then_prompts(monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    result = NewSkillPipeline()._review_skill(_REVIEW_SKILL)
+    assert result is _REVIEW_SKILL
+    # The display is printed to stdout before the (stubbed) prompt.
+    out = capsys.readouterr().out
+    assert "Name: adder" in out
+    assert "Skill type: function" in out
 
