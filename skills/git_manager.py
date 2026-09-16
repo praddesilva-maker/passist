@@ -10,6 +10,7 @@ when a git command that *should* succeed fails on a real repository.
 
 import os
 import subprocess
+import sys
 from typing import Any, Dict, List, Optional
 
 
@@ -48,7 +49,15 @@ class GitManager:
 
     def _check_repo(self) -> None:
         if not self.repo_path or not _run_git(self.repo_path, ["rev-parse", "--is-inside-work-tree"]):
-            print(f"[git-manager] {self.repo_path!r} is not a git repo; auto-commit disabled")
+            # Diagnostic only -- must not land on stdout: main.py's CLI (and
+            # anything else) writes structured JSON to stdout, and this used
+            # to print ahead of it on every non-repo path, corrupting that
+            # output (see tests/test_agent.py's cli_env / _cli_json comments,
+            # which had to work around it by scanning for the first '{').
+            print(
+                f"[git-manager] {self.repo_path!r} is not a git repo; auto-commit disabled",
+                file=sys.stderr,
+            )
             return
         self.is_repo = True
         self.auto_commit = True

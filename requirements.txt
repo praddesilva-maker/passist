@@ -5,10 +5,32 @@ python-dotenv>=1.0.0
 # LangChain Dependencies
 langchain>=0.1.0
 langchain-core>=0.1.0
-langchain-community>=0.1.0
+
+# langchain-community>=0.1.0 was in the original dependency list but is not
+# imported anywhere in this codebase (verified 2026-09-17) and pulls a heavy,
+# unrelated transitive tree (numpy, SQLAlchemy, aiohttp, ...). Left commented
+# out rather than installed; re-enable if a future skill genuinely needs a
+# community integration.
+# langchain-community>=0.1.0
 
 # GLM (Qwen) Integration
-langchain-glm>=0.0.1
+#
+# langchain-glm>=0.0.1 as originally pinned here has never been installed in
+# this project's venv, and is NOT imported anywhere in the codebase. Verified
+# 2026-09-17: the package only ever published 0.0.1/0.0.2 on PyPI, and
+# resolving it against the langchain>=1.4 / langchain-core>=1.6 stack this
+# project actually runs (see langchain-openai below) causes pip's resolver to
+# backtrack for minutes trying to satisfy its old langchain<0.1 pin -- i.e. it
+# is incompatible with the installed stack and installing it risks a forced
+# downgrade of langchain/langchain-core that would break the whole system.
+# Left uninstalled/commented; GLM is actually reached through the
+# OpenAI-compatible endpoint below (agent/llm.py), not this package.
+# langchain-glm>=0.0.1
+
+# GLM / Qwen is accessed through an OpenAI-compatible API (see
+# agent/llm.py: ChatOpenAI pointed at ModelConfig.base_url). This package is
+# imported there but was missing from this file -- added 2026-09-17.
+langchain-openai>=0.1.0
 
 # SQLite for local storage
 # (Built into Python standard library)

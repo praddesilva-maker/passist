@@ -370,16 +370,34 @@ class UnifiedSkillStage:
     # Internals
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _fail(
+        self,
         skill: Dict[str, Any],
         skill_type: str,
         input_data: Dict[str, Any],
         error: str,
         started: float,
+        log_run: bool = True,
     ) -> Dict[str, Any]:
+        """Build a failure result, recording the failed run.
+
+        Failures are logged for the same reason successes are (Task 18.1
+        stores *skill executions*, and 18.2 asks for execution tracking and
+        data integrity): a run history that silently omits every failure
+        cannot distinguish a skill that was never called from one that
+        fails every time.
+        """
         duration_ms = (time.perf_counter() - started) * 1000.0
         name = skill.get("name", "unknown")
+        if log_run:
+            try:
+                self.registry.log_skill_run(
+                    name, input_data, None,
+                    success=False, duration_ms=duration_ms,
+                    version=skill.get("current_version"), error=error,
+                )
+            except Exception:  # logging must never break execution
+                pass
         return {
             "success": False,
             "skill_name": name,

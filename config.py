@@ -47,11 +47,33 @@ class ModelConfig:
         return bool(self.api_key)
 
 
+def _env_first(*names: str, default: str = "") -> str:
+    """First non-empty value among ``names``, else ``default``.
+
+    The test suite's ``isolated_env`` fixture redirects shared state with
+    ``PA_``-prefixed variables (``PA_DATABASE_PATH``, ``PA_GIT_REPO_PATH``),
+    while this module originally read only the unprefixed names. Anything
+    building a ``Config()`` under test therefore pointed at the *real*
+    ``skills/skills.db`` and the *real* project git repo rather than the
+    per-test temp dir. Reading the ``PA_`` name first closes that isolation
+    hole while keeping the unprefixed names working for normal use.
+    """
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
 @dataclass
 class DatabaseConfig:
     """Configuration for the SQLite skill registry."""
 
-    db_path: str = field(default_factory=lambda: os.getenv("SKILLS_DB_PATH", "./skills/skills.db"))
+    db_path: str = field(
+        default_factory=lambda: _env_first(
+            "PA_DATABASE_PATH", "SKILLS_DB_PATH", default="./skills/skills.db"
+        )
+    )
     enable_version_history: bool = True
 
 
@@ -60,8 +82,9 @@ class GitConfig:
     """Configuration for Git integration."""
 
     repo_path: str = field(
-        default_factory=lambda: os.getenv(
-            "GIT_REPO_PATH", os.path.dirname(os.path.abspath(__file__))
+        default_factory=lambda: _env_first(
+            "PA_GIT_REPO_PATH", "GIT_REPO_PATH",
+            default=os.path.dirname(os.path.abspath(__file__)),
         )
     )
     commit_message_template: str = "feat(skills): {skill_name} v{version}"

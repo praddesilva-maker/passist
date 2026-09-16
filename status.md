@@ -32,7 +32,7 @@ guide slice before being marked `DONE`.
 
 | # | Task | Status | Tests | Committed | Notes |
 |---|------|--------|-------|-----------|-------|
-| 0 | Setup and Foundation | REVIEW | — | no | venv + requirements.txt present; `.gitignore` untracked |
+| 0 | Setup and Foundation | DONE | — | yes | missing `langchain-openai` added; `.coverage` untracked + ignored; `_probe*.txt` deleted; unused/incompatible deps documented |
 | 1 | Registry — Database Schema | DONE | 13 in file | yes | FTS auto-sync triggers were missing (Task 1.4); added + 5 schema tests |
 | 2 | Registry — Basic Operations | DONE | 13 in file | yes | sorted LIKE fallback; `id` exposed; `list_skills` type/tag filtering + `tags` column |
 | 3 | Registry — Version Control Ops | DONE | 10 in file | yes | per-version metadata snapshot enables real `compare_versions`; spec-named aliases added |
@@ -50,7 +50,7 @@ guide slice before being marked `DONE`.
 | 15 | Existing Skill Pipeline — Search | DONE | 13 in file | yes | `find_skills()`, lexical relevance ranking, `display_results()`, `suggest()` |
 | 16 | Existing Skill Pipeline — Execution | DONE | 7 in file | yes | per-type execution + dispatcher; delegates loading to `UnifiedSkillStage` |
 | 17 | Existing Skill Pipeline — NL Parsing | DONE | 19 in file | yes | LLM-first parsing + deterministic fallback; `validate_params()` type coercion |
-| 18 | Version Control Integration | REVIEW | — | no | `skills/git_manager.py` (153 lines) exists |
+| 18 | Version Control Integration | DONE | 9 in file | yes | **mis-mapped to git_manager.py on its title**; the guide specifies `_log_skill_run()`. Failed runs were never logged — fixed |
 | 19 | Test Existing Skill Pipeline | DONE | 50 | yes | `tests/test_existing_skill_pipeline.py`; suite 242 passed; `pipelines/` 94% |
 | 20 | Main Agent — GLM Integration | REVIEW | passing | no | `agent/llm.py` + `agent/main_agent.py` (533 lines) |
 | 21 | Main Agent — Intent Detection | REVIEW | passing | no | |

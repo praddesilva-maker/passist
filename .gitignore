@@ -11,3 +11,11 @@ __pycache__/
 
 # Tooling caches
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environment (also self-ignored via its own nested .gitignore,
+# listed here explicitly so a recreated venv is covered either way)
+.venv/
+venv/
