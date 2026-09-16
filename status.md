@@ -2,15 +2,15 @@
 
 ## 1. Snapshot
 
-- **Last updated:** 2026-09-16 08:19:00
+- **Last updated:** 2026-09-16 22:15 IST
 - **State:** RUNNING
-- **Current task:** Task 8 — New Skill Pipeline — Skill Structure Generation (starting)
-- **Doing right now:** Task 7 closed and committed as `e4e9565`. Next: load the
-  Task 8 spec slice (`PERSONAL_ASSISTANT_GUIDE.md` lines 2296–2549) and begin
-  implementing `analyze_request()` in `pipelines/new_skill_pipeline.py`.
-- **Next action:** Flip Task 8 to `IN_PROGRESS` in `RUNBOOK.md` and implement
-  skill structure generation (type, name, description, parameters) with LLM-first
-  + deterministic offline fallback.
+- **Current task:** Task 8 — New Skill Pipeline — Skill Structure Generation (IN_PROGRESS)
+- **Doing right now:** Task 7 closed and committed as `e4e9565`. Implementing
+  `analyze_request()` in `pipelines/new_skill_pipeline.py` — LLM-first with a
+  deterministic offline fallback; name/type/parameters normalization compatible
+  with `skills/registry.py` validation; rewiring `_handle_develop_skill()` to use it.
+- **Next action:** Extend `tests/test_new_skill_pipeline.py`, run the suite +
+  coverage, update RUNBOOK/status, commit as `feat(task-8): ...`.
 
 ## 2. Task Board
 
@@ -33,7 +33,7 @@ guide slice before being marked `DONE`.
 | 5 | Unified Stage — Skill Loading | REVIEW | passing | no | |
 | 6 | Unified Stage — Testing | DONE | 25 passed | yes | `8b8875d` + `d159245`; 25 tests in `tests/test_unified_stage.py`; coverage 82% (task scope) |
 | 7 | New Skill Pipeline — Intent Analysis | DONE | 58 passed | yes | `e4e9565`; `pipelines/` package created; create/use/general intent detection with LLM + offline fallback; 100% coverage (2026-09-16) |
-| 8 | New Skill Pipeline — Structure Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
+| 8 | New Skill Pipeline — Structure Gen | IN_PROGRESS | — | no | implementing `analyze_request()` |
 | 9 | New Skill Pipeline — Code Gen | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 10 | New Skill Pipeline — Interactive Review | NOT_STARTED | — | no | no `pipelines/` package exists |
 | 11 | New Skill Pipeline — Test & Register | NOT_STARTED | — | no | no `pipelines/` package exists |
@@ -289,3 +289,4 @@ committed.
 - 2026-09-16 08:08:00 — Wrote `tests/test_new_skill_pipeline.py` (58 tests: create/use/general phrasings, edge cases, no-false-positive checks, LLM success/failure/unparseable, offline models never invoked, envelope + stats).
 - 2026-09-16 08:17:00 — Final verification: `pytest tests/test_new_skill_pipeline.py -q` → 58 passed; full suite → 110 passed, 1 skipped; `--cov=pipelines` → 100% (70 stmts). Offline demo: create/use/general/empty → create_skill/use_skill/general/general, stats {requests: 4, create_skill: 1, use_skill: 1, general: 2}.
 - 2026-09-16 08:19:00 — Committed `e4e9565` "feat(task-7): new skill pipeline intent analysis" (+528). Task 7 marked DONE in `RUNBOOK.md` + board. Next: Task 8 (guide lines 2296–2549, `analyze_request()` + structure generation).
+- 2026-09-16 22:11 IST - Task 8 IN_PROGRESS: implementing analyze_request() (spec §1.6.2 / §2.2 / §6 lines 503-598, 1315-1353, 2992-3059)

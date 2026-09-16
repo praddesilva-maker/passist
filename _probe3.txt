@@ -1,0 +1,272 @@
+
+    def _build_memory(self, memory_backend: Any) -> Any:
+        if memory_backend is None or memory_backend == "memory":
+            return _DictMemoryBackend()
+        if isinstance(memory_backend, str):
+            return _FileMemoryBackend(memory_backend)
+        # Assume an object exposing .get / .set
+        return memory_backend
+
+    def _remember_action(self, intent: str, skill_name: Optional[str]) -> None:
+        try:
+            actions = self.memory.get(self.MEMORY_KEY_RECENT_ACTIONS, []) or []
+            if not isinstance(actions, list):
+                actions = []
+            actions.append({"intent": intent, "skill": skill_name, "at": time.time()})
+            self.memory.set(
+                self.MEMORY_KEY_RECENT_ACTIONS,
+                actions[-self.RECENT_ACTIONS_LIMIT :],
+            )
+        except Exception:  # memory must never break the request
+            pass
+
+    def get_memory(self) -> Dict[str, Any]:
+        try:
+            return self.memory.snapshot()
+        except Exception:
+            return {}
+
+    # ------------------------------------------------------------------
+    # Intent detection
+    # ------------------------------------------------------------------
+
+    def detect_intent(self, request: str) -> str:
+        """Classify a request into use_skill / develop_skill / unknown.
+
+        Uses the LLM when one is available and can generate; otherwise (or on
+        any failure) falls back to deterministic keyword matching.
+        """
+        text = (request or "").strip()
+        if not text:
+            return INTENT_UNKNOWN
+        if self.llm is not None and not getattr(self.llm, "is_offline", False):
+            intent = self._detect_intent_llm(text)
+            if intent:
+                return intent
+        return self._detect_intent_heuristic(text)
+
+    def _detect_intent_llm(self, text: str) -> Optional[str]:
+        prompt = (
+            "Classify the user request into exactly one of: "
+            f"'{INTENT_USE_SKILL}', '{INTENT_DEVELOP_SKILL}', '{INTENT_UNKNOWN}'. "
+            "Return only the intent string, nothing else.\n\n"
+            f"Request: {text!r}"
+        )
+        try:
+            response = self.llm.invoke(prompt)
+        except Exception:
+            return None
+        raw = extract_text(response).strip().strip("`\"' \n")
+        for intent in (INTENT_USE_SKILL, INTENT_DEVELOP_SKILL, INTENT_UNKNOWN):
+            if intent in raw.lower():
+                return intent
+        return None
+
+    @staticmethod
+    def _detect_intent_heuristic(text: str) -> str:
+        lowered = text.lower()
+        # "develop a skill that uses X" must classify as develop, not use.
+        if any(k in lowered for k in _DEVELOP_KEYWORDS) or re.search(
+            r"\b(?:develop|create|make|build|write|add)\s+"
+            r"(?:a\s+|new\s+|the\s+)?(?:[A-Za-z]+\s+)?skill\b",
+            lowered,
+        ):
+            return INTENT_DEVELOP_SKILL
+        if any(k in lowered for k in _USE_KEYWORDS) or re.search(
+            r"\b(run|execute|call|do|apply)\s+(?:a\s+)?skill\b", lowered
+        ):
+            return INTENT_USE_SKILL
+        if re.search(r"\b(?:use|run|execute)\s+(?:my\s+|the\s+)?skill\b", lowered):
+            return INTENT_USE_SKILL
+        return INTENT_UNKNOWN
+
+    # ------------------------------------------------------------------
+    # Request extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def extract_skill_args(
+        request: str, request_data: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
+        """Extract (skill_name, input_data) from a use_skill request.
+
+        ``request_data`` (a dict, or a JSON string under ``"input"``) takes
+        precedence for arguments.  A trailing JSON object or ``key=value``
+        pairs in the request text are parsed as arguments.
+        """
+        data: Dict[str, Any] = {}
+        name: Optional[str] = None
+
+        if request_data:
+            if isinstance(request_data, str):
+                try:
+                    request_data = json.loads(request_data)
+                except (ValueError, TypeError):
+                    request_data = {}
+            if isinstance(request_data, dict):
+                if isinstance(request_data.get("name"), str):
+                    name = request_data["name"].strip()
+                for key in ("input", "input_data", "arguments", "args"):
+                    if isinstance(request_data.get(key), dict):
+                        data.update(request_data[key])
+                for key, value in request_data.items():
+                    if key not in ("name", "input", "input_data", "arguments", "args"):
+                        data[key] = value
+
+        text = (request or "").strip()
+        # Trailing JSON object:  use skill adder {"x": 2, "y": 3}
+        json_match = re.search(r"(\{.*\})\s*$", text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                if isinstance(parsed, dict):
+                    data.update(parsed)
+                    text = text[: json_match.start()].strip()
+            except (ValueError, TypeError):
+                pass
+        # key=value pairs:  use skill adder x=2 y=3
+        kv = re.findall(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('[^']*'|\"[^\"]*\"|\S+)", text
+        )
+        for key, raw_value in kv:
+            if key.lower() in ("skill", "name"):
+                continue
+            value: Any = raw_value
+            try:
+                value = json.loads(raw_value)
+            except (ValueError, TypeError):
+                if (
+                    len(raw_value) >= 2
+                    and raw_value[0] == raw_value[-1]
+                    and raw_value[0] in ("'", '"')
+                ):
+                    value = raw_value[1:-1]
+            data[key] = value
+
+        if not name:
+            for pattern in _NAME_PATTERNS:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    name = match.group(1)
+                    break
+
+        return name, data
+
+    @staticmethod
+    def extract_develop_args(
+        request: str, request_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Extract {name, code, skill_type, description} from a develop request."""
+        args: Dict[str, Any] = {
+            "name": None, "code": None, "skill_type": None, "description": None,
+        }
+        parsed = request_data
+        if isinstance(request_data, str):
+            try:
+                parsed = json.loads(request_data)
+            except (ValueError, TypeError):
+                parsed = None
+        if isinstance(parsed, dict):
+            args["name"] = parsed.get("name")
+            args["code"] = parsed.get("code")
+            args["skill_type"] = parsed.get("skill_type") or parsed.get("type")
+            args["description"] = parsed.get("description")
+
+        text = (request or "").strip()
+        # Fenced code block
+        fence = re.search(r"```[a-zA-Z]*\n(.*?)```", text, re.DOTALL)
+        if fence and not args["code"]:
+            args["code"] = fence.group(1).strip()
+        # Explicit "code:" line
+        if not args["code"]:
+            code_line = re.search(r"^\s*code\s*:\s*(.+)$", text, re.MULTILINE)
+            if code_line:
+                args["code"] = code_line.group(1).strip()
+        # Skill type
+        if not args["skill_type"]:
+            type_match = re.search(
+                r"\b(?:skill\s+type|type)\s*[:=]\s*(function|agent|workflow)",
+                text, re.IGNORECASE,
+            )
+            if type_match:
+                args["skill_type"] = type_match.group(1).lower()
+        # Name
+        if not args["name"]:
+            for pattern in _DEVELOP_NAME_PATTERNS:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    args["name"] = match.group(1)
+                    break
+        if args["name"] is None and args["code"]:
+            args["name"] = "generated_skill"
+        return args
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    def handle_request(
+        self,
+        request: str,
+        request_data: Optional[Dict[str, Any]] = None,
+        include_dev: bool = True,
+    ) -> Dict[str, Any]:
+        """Handle one user request; always returns a stable result dict."""
+        self.stats["requests"] += 1
+        intent = self.detect_intent(request)
+        if intent == INTENT_DEVELOP_SKILL:
+            result = self._handle_develop_skill(request, request_data)
+        elif intent == INTENT_USE_SKILL:
+            result = self._handle_use_skill(request, request_data)
+        else:
+            result = {
+                "success": False,
+                "message": (
+                    "I could not determine what you want to do. "
+                    "Try 'use skill <name>' or 'develop a skill named <name>'."
+                ),
+            }
+        skill_name = result.get("skill_name")
+        self._remember_action(intent, skill_name)
+        try:
+            self.memory.set(self.MEMORY_KEY_LAST_RESULT, result)
+            self.memory.set(
+                self.MEMORY_KEY_SKILL_COUNT,
+                self.get_registry_status()["total_skills"],
+            )
+        except Exception:
+            pass
+
+        response: Dict[str, Any] = {
+            "intent": intent,
+            "skill_name": skill_name,
+            "result": result,
+            "error": result.get("error") if isinstance(result, dict) else None,
+        }
+        if include_dev:
+            response["registry_status"] = self.get_registry_status()
+            response["skill"] = (
+                self.registry.get_skill(skill_name) if skill_name else None
+            )
+        return response
+
+    def _handle_use_skill(
+        self, request: str, request_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        name, input_data = self.extract_skill_args(request, request_data)
+        if not name:
+            return {
+                "success": False,
+                "skill_name": None,
+                "error": "No skill name found in the request.",
+            }
+        skill = self.registry.get_skill(name)
+        if skill is None:
+            return {
+                "success": False,
+                "skill_name": name,
+                "error": f"Skill '{name}' is not registered (or inactive).",
+            }
+        try:
+            result = self.stage.execute_skill(name, input_data)
+533 agent/main_agent.py

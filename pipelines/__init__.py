@@ -19,6 +19,13 @@ from .new_skill_pipeline import (
     INTENT_USE_SKILL,
     NewSkillPipeline,
 )
+from .new_skill_pipeline import (  # noqa: F401  (Task 8 vocabulary)
+    CANONICAL_SKILL_TYPES,
+    PARAMETER_TYPES,
+    SKILL_TYPE_AGENT,
+    SKILL_TYPE_FUNCTION,
+    SKILL_TYPE_WORKFLOW,
+)
 
 __all__ = [
     "NewSkillPipeline",
@@ -26,4 +33,9 @@ __all__ = [
     "INTENT_CREATE_SKILL",
     "INTENT_GENERAL",
     "INTENT_USE_SKILL",
+    "CANONICAL_SKILL_TYPES",
+    "PARAMETER_TYPES",
+    "SKILL_TYPE_AGENT",
+    "SKILL_TYPE_FUNCTION",
+    "SKILL_TYPE_WORKFLOW",
 ]
