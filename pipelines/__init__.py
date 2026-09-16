@@ -9,7 +9,9 @@ The Personal Assistant routes work through two pipelines:
   (``create_skill`` / ``use_skill`` / ``general``); Tasks 8-11 add
   structure generation, code generation, interactive review, and
   testing/registration on top of it.
-* The Existing Skill Pipeline (execution flow) — delivered in Tasks 15-17.
+* :class:`~pipelines.existing_skill_pipeline.ExistingSkillPipeline` — the
+  Existing Skill Pipeline (execution flow): skill search (Task 15), skill
+  execution (Task 16) and natural-language parameter parsing (Task 17).
 """
 
 from .new_skill_pipeline import (
@@ -37,8 +39,25 @@ from .new_skill_pipeline import (  # noqa: F401  (Task 11 creation flow)
     STATUS_REGISTRATION_FAILED,
 )
 
+from .existing_skill_pipeline import (  # noqa: F401  (Tasks 15-17)
+    ExistingSkillPipeline,
+)
+from .existing_skill_pipeline import (  # noqa: F401  (execution statuses)
+    STATUS_AMBIGUOUS,
+    STATUS_EXECUTED,
+    STATUS_EXECUTION_FAILED,
+    STATUS_INVALID_PARAMS,
+    STATUS_NOT_FOUND,
+)
+
 __all__ = [
     "NewSkillPipeline",
+    "ExistingSkillPipeline",
+    "STATUS_AMBIGUOUS",
+    "STATUS_EXECUTED",
+    "STATUS_EXECUTION_FAILED",
+    "STATUS_INVALID_PARAMS",
+    "STATUS_NOT_FOUND",
     "ALL_INTENTS",
     "INTENT_CREATE_SKILL",
     "INTENT_GENERAL",

@@ -47,11 +47,11 @@ guide slice before being marked `DONE`.
 | 12 | Skill Builder — Basic Features | REVIEW | passing | no | `skills/skill_builder.py` (131 lines), has a blocking bug |
 | 13 | Skill Builder — Advanced Features | NOT_STARTED | — | no | |
 | 14 | Skill Builder — Testing & Integration | BLOCKED | passing | no | 3 of 6 tests fail on the same defect |
-| 15 | Existing Skill Pipeline — Search | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
-| 16 | Existing Skill Pipeline — Execution | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
-| 17 | Existing Skill Pipeline — NL Parsing | NOT_STARTED | — | no | `pipelines/` exists; `existing_skill_pipeline.py` not yet created |
+| 15 | Existing Skill Pipeline — Search | DONE | 13 in file | yes | `find_skills()`, lexical relevance ranking, `display_results()`, `suggest()` |
+| 16 | Existing Skill Pipeline — Execution | DONE | 7 in file | yes | per-type execution + dispatcher; delegates loading to `UnifiedSkillStage` |
+| 17 | Existing Skill Pipeline — NL Parsing | DONE | 19 in file | yes | LLM-first parsing + deterministic fallback; `validate_params()` type coercion |
 | 18 | Version Control Integration | REVIEW | — | no | `skills/git_manager.py` (153 lines) exists |
-| 19 | Test Existing Skill Pipeline | NOT_STARTED | — | no | |
+| 19 | Test Existing Skill Pipeline | DONE | 50 | yes | `tests/test_existing_skill_pipeline.py`; suite 242 passed; `pipelines/` 94% |
 | 20 | Main Agent — GLM Integration | REVIEW | passing | no | `agent/llm.py` + `agent/main_agent.py` (533 lines) |
 | 21 | Main Agent — Intent Detection | REVIEW | passing | no | |
 | 22 | Main Agent — Pipeline Integration | NOT_STARTED | — | no | `pipelines/` now exists; remains until Task 11 + Tasks 15–17 land |
@@ -188,6 +188,56 @@ previous run; defect 1 was in committed, already-`DONE` work.
 - The `stats` dict has both the Task 7 intent counter `create_skill` and the
   Task 11 flow counter `create_total`. Confusingly similar names; renaming
   would break the Task 7 tests, so left alone.
+
+## 3c. Tasks 15-17, 19 — Existing Skill Pipeline (DONE 2026-09-17)
+
+New module `pipelines/existing_skill_pipeline.py` (the execution flow) and
+`tests/test_existing_skill_pipeline.py` (50 tests).
+
+- **Task 15 — search.** `find_skills()` uses the registry's full-text search,
+  then ranks candidates itself (the registry returns `score: None`, so
+  ranking belongs here). Plus `display_results()` and `suggest()`.
+- **Task 16 — execution.** `_execute_function_skill()`,
+  `_execute_agent_skill()`, `_execute_workflow_skill()` and the
+  `execute_skill()` dispatcher. Each shapes input and post-processes the
+  result, then delegates the actual load-and-run to `UnifiedSkillStage`,
+  which already owns module loading, keyword resolution and run logging.
+  Guide §1.5 makes the unified stage the single execution point, so
+  re-implementing loading here would have duplicated it.
+- **Task 17 — parsing.** `_parse_input_to_params()` is LLM-first with a
+  deterministic fallback (the established pattern in this codebase), and
+  `validate_params()` does type coercion, required-field checks and
+  default filling.
+- **Task 19 — tests.** 50 tests: 13 search, 7 execution, 19 parsing and
+  validation, 11 end-to-end and statistics.
+
+### Two defects found by running the code, not by reading it
+
+1. **Relevance ranking was effectively broken.** Scoring compared tokens for
+   exact equality, so the query "count words" shared *no* token with the
+   skill `word_counter` ("count" != "counter", "words" != "word"). It scored
+   0.17, below the weak-match floor, and the end-to-end request returned
+   `not_found` for an obviously correct match. Added `_stem()` (strips
+   `ing`/`ed`/`er` and plural `s`); the same query now scores 1.00.
+
+2. **`key=value` embedded in a sentence was never parsed.** The extractor
+   split the text into lines and required the whole left-hand side to be a
+   bare key, so `"count the words in text=hello"` found nothing and fell
+   through to assigning the *entire sentence* to the parameter. Rewritten to
+   scan for keys anywhere in the string, with each value running to the next
+   key — so unquoted multi-word values survive and several pairs on one line
+   still split.
+
+Also tightened: the single-parameter passthrough now only applies to a
+textual parameter. Handing arbitrary prose to an `int` parameter invented a
+wrong value where reporting it missing is the honest outcome.
+
+- **Design note — no embeddings.** Task 15.2 asks for vector embeddings
+  "if available". None is available offline, and the project's hard
+  requirement is that everything works with no API key, so ranking is
+  lexical. `_score_match()` is the seam an embedding-backed ranker replaces.
+- **Coverage:** `pipelines/` **94%** overall (783 stmts, 48 miss);
+  `existing_skill_pipeline.py` 93%.
 
 ## 4. Test Status
 

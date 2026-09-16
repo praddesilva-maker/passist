@@ -110,11 +110,11 @@ do not mark it `DONE` without verifying it meets that task's stated DoD.
 | 12 | Interactive Skill Builder — Basic Features | `3146-3369` | 224 | skills/skill_builder.py | REVIEW | offline_template brace bug fixed 2026-09-16 |
 | 13 | Interactive Skill Builder — Advanced Features | `3370-3588` | 219 | skills/skill_builder.py | NOT_STARTED |  |
 | 14 | Interactive Skill Builder — Testing and Integration | `3589-3762` | 174 | tests/test_skill_builder.py | REVIEW | passing after 2026-09-16 fixes |
-| 15 | Existing Skill Pipeline — Skill Search | `3763-3982` | 220 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
-| 16 | Existing Skill Pipeline — Skill Execution | `3983-4211` | 229 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
-| 17 | Existing Skill Pipeline — Natural Language Parsing | `4212-4432` | 221 | pipelines/existing_skill_pipeline.py | NOT_STARTED | pipelines/ package exists; existing_skill_pipeline.py not yet created |
+| 15 | Existing Skill Pipeline — Skill Search | `3763-3982` | 220 | pipelines/existing_skill_pipeline.py | DONE | find_skills() + lexical relevance ranking + display_results() + suggest(); stemming added after ranking proved useless without it (2026-09-17) |
+| 16 | Existing Skill Pipeline — Skill Execution | `3983-4211` | 229 | pipelines/existing_skill_pipeline.py | DONE | _execute_function/agent/workflow_skill() + execute_skill() dispatcher; delegates loading to UnifiedSkillStage per guide §1.5 (2026-09-17) |
+| 17 | Existing Skill Pipeline — Natural Language Parsing | `4212-4432` | 221 | pipelines/existing_skill_pipeline.py | DONE | _parse_input_to_params() LLM-first + deterministic fallback; validate_params() with type coercion and required checks (2026-09-17) |
 | 18 | Version Control Integration | `4433-4568` | 136 | skills/version_control.py (currently skills/git_manager.py) | REVIEW | named git_manager.py, not version_control.py |
-| 19 | Test Existing Skill Pipeline | `4569-4828` | 260 | tests for existing-skill pipeline | NOT_STARTED |  |
+| 19 | Test Existing Skill Pipeline | `4569-4828` | 260 | tests for existing-skill pipeline | DONE | tests/test_existing_skill_pipeline.py — 50 tests (search / execution / parsing / end-to-end); suite 242 passed; pipelines/ 94% (2026-09-17) |
 | 20 | Main Agent — GLM Integration | `4829-5004` | 176 | agent/llm.py, agent/agent_config.py | REVIEW | create_chat_model + OfflineChatModel fixed 2026-09-16 |
 | 21 | Main Agent — Intent Detection | `5005-5267` | 263 | agent/main_agent.py (intent) | REVIEW |  |
 | 22 | Main Agent — Pipeline Integration | `5268-5477` | 210 | agent/main_agent.py (pipeline wiring) | BLOCKED | blocked until Tasks 7-11 and 15-17 create pipelines/ |
