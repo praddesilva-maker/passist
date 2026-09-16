@@ -10,7 +10,7 @@ import pytest
 
 def test_unknown_intent_offline_response(temp_agent, isolated_env):
     response = temp_agent.handle_request("hello there")
-    assert response["intent"] == "unknown"
+    assert response["intent"] == "general"
     assert response["success"] is True
     # Offline LLM -> deterministic fallback message, not a crash.
     assert "offline" in response["response"].lower()
@@ -53,7 +53,7 @@ def test_develop_skill_intent_creates_offline_template(temp_agent):
             "description": "Adds numbers",
         },
     )
-    assert response["intent"] == "develop_skill"
+    assert response["intent"] == "create_skill"
     result = response["result"]
     assert result["success"] is True
     assert result["created"] is True
@@ -61,7 +61,10 @@ def test_develop_skill_intent_creates_offline_template(temp_agent):
     # Now usable through the unified stage.
     use = temp_agent.handle_request(
         "use skill adder",
-        request_data={"name": "adder", "input": {"input_value": "x"}},
+        # The pipeline-generated skill declares an `input` parameter (the
+        # old offline template took `input_value`); passing an undeclared
+        # name is now correctly rejected rather than silently ignored.
+        request_data={"name": "adder", "input": {"input": "x"}},
     )
     assert use["result"]["success"] is True
 
@@ -71,14 +74,14 @@ def test_develop_skill_rejects_invalid_name(temp_agent):
         "develop a skill named @bad name!",
         request_data={"name": "@bad name!", "description": "bad"},
     )
-    assert response["intent"] == "develop_skill"
+    assert response["intent"] == "create_skill"
     assert response["result"]["success"] is False
     assert response["result"]["error"]
 
 
 def test_handle_request_empty_message_no_crash(temp_agent):
     response = temp_agent.handle_request("")
-    assert response["intent"] == "unknown"
+    assert response["intent"] == "general"
     assert response["success"] is True
 
 
@@ -295,11 +298,17 @@ def test_cli_create_list_use_roundtrip(cli_env, capsys):
     assert listed["total_skills"] == 1
     assert listed["skills"][0]["name"] == "adder"
 
-    rc = main.main(["use", "adder", "input_value=5"])
+    # `input` is the parameter the pipeline-generated skill declares; an
+    # undeclared name is now rejected instead of being silently dropped.
+    rc = main.main(["use", "adder", "input=5"])
     used = _cli_json(capsys)
     assert rc == 0
     assert used["result"]["success"] is True
-    assert used["result"]["output"]["input"] == 5
+    # Creation now goes through the New Skill Pipeline, so a generated skill
+    # carries the pipeline's placeholder body (Task 9's generator) rather than
+    # SkillBuilder.offline_template's echo dict. What matters here is that the
+    # CLI round trip executes the skill it just created.
+    assert isinstance(used["result"]["output"], str)
 
 
 def test_cli_use_unknown_skill_nonzero_exit(cli_env, capsys):
@@ -327,7 +336,7 @@ def test_cli_chat_routes_through_agent(cli_env, capsys):
     rc = main.main(["chat", "hello", "there"])
     payload = _cli_json(capsys)
     assert rc == 0
-    assert payload["intent"] == "unknown"
+    assert payload["intent"] == "general"
 
 
 def test_cli_gitlog_never_raises(cli_env, capsys):
@@ -364,3 +373,186 @@ def test_cli_chat_empty_message_and_stdin_errors_cleanly(cli_env, capsys, monkey
     payload = _cli_json(capsys)
     assert rc == 2
     assert payload["success"] is False
+
+
+# ===========================================================================
+# Task 22 (guide §1.8.23): pipeline integration — the agent routes through
+# pipelines/ instead of re-implementing creation and execution, the intent
+# vocabulary is unified with the guide, and process_input()/run() exist.
+# ===========================================================================
+
+from agent.main_agent import (  # noqa: E402
+    ALL_INTENTS,
+    INTENT_CREATE_SKILL,
+    INTENT_DEVELOP_SKILL,
+    INTENT_GENERAL,
+    INTENT_UNKNOWN,
+    INTENT_USE_SKILL,
+)
+
+
+def test_intent_vocabulary_matches_the_guide():
+    assert ALL_INTENTS == ("use_skill", "create_skill", "general")
+
+
+def test_deprecated_intent_aliases_still_resolve():
+    """External callers using the pre-Task-22 names keep working."""
+    assert INTENT_DEVELOP_SKILL == INTENT_CREATE_SKILL == "create_skill"
+    assert INTENT_UNKNOWN == INTENT_GENERAL == "general"
+
+
+def test_agent_holds_both_pipelines(temp_agent):
+    from pipelines.existing_skill_pipeline import ExistingSkillPipeline
+    from pipelines.new_skill_pipeline import NewSkillPipeline
+
+    assert isinstance(temp_agent.new_pipeline, NewSkillPipeline)
+    assert isinstance(temp_agent.existing_pipeline, ExistingSkillPipeline)
+
+
+def test_pipelines_are_injectable(temp_registry):
+    from agent.main_agent import MainAgent
+
+    sentinel_new, sentinel_existing = object(), object()
+    with MainAgent(
+        registry=temp_registry,
+        new_pipeline=sentinel_new,
+        existing_pipeline=sentinel_existing,
+    ) as agent:
+        assert agent.new_pipeline is sentinel_new
+        assert agent.existing_pipeline is sentinel_existing
+
+
+# --- routing through process_input() (22.3) -------------------------------
+
+def test_process_input_routes_creation_to_the_new_pipeline(temp_agent):
+    calls = []
+
+    class _Spy:
+        def create_skill(self, request, request_data=None, auto_confirm=False, **kw):
+            calls.append((request, auto_confirm))
+            return {
+                "status": "completed", "skill_name": "spied",
+                "skill": {"name": "spied", "current_version": 1},
+                "errors": [], "qa": None, "response": "",
+            }
+
+    temp_agent.new_pipeline = _Spy()
+    intent, result = temp_agent.process_input(
+        "develop a skill named spied", {"name": "spied"}
+    )
+    assert intent == INTENT_CREATE_SKILL
+    assert result["success"] is True
+    assert calls and calls[0][1] is True        # agent runs non-interactively
+
+
+def test_process_input_routes_execution_to_the_existing_pipeline(temp_agent):
+    calls = []
+
+    class _Spy:
+        def handle_request(self, request, skill_name=None, input_data=None):
+            calls.append(skill_name)
+            return {
+                "status": "executed", "errors": [], "response": "ok",
+                "execution": {
+                    "success": True, "output": "spied-output", "error": None,
+                    "skill_type": "function", "version": 1,
+                    "execution_time_ms": 0.1,
+                },
+            }
+
+    temp_agent.existing_pipeline = _Spy()
+    intent, result = temp_agent.process_input(
+        "use skill echo_skill", {"name": "echo_skill", "input": {}}
+    )
+    assert intent == INTENT_USE_SKILL
+    assert result["success"] is True
+    assert result["output"] == "spied-output"
+    assert calls == ["echo_skill"]
+
+
+def test_process_input_routes_anything_else_to_the_general_handler(temp_agent):
+    intent, result = temp_agent.process_input("what is the weather?")
+    assert intent == INTENT_GENERAL
+    assert result["success"] is False
+    assert "could not determine" in result["message"]
+
+
+def test_handle_request_still_wraps_process_input(temp_agent):
+    response = temp_agent.handle_request("what is the weather?")
+    assert response["intent"] == INTENT_GENERAL
+    assert response["success"] is True          # handled, though not actioned
+    assert response["response"]
+
+
+# --- creation semantics preserved through the pipeline --------------------
+
+def test_creation_goes_through_the_pipeline_end_to_end(temp_agent):
+    response = temp_agent.handle_request(
+        "develop a skill named routed_skill",
+        request_data={"name": "routed_skill", "description": "routed"},
+    )
+    assert response["result"]["success"] is True
+    assert temp_agent.registry.get_skill("routed_skill") is not None
+    assert response["result"]["qa"]["passed"] is True   # QA gate ran
+
+
+def test_caller_supplied_code_is_not_overwritten_by_generation(temp_agent):
+    """The CLI's --code path: if the caller wrote the implementation, the
+    pipeline must not silently replace it with a generated placeholder."""
+    code = "def run(input: str = '') -> str:\n    return 'mine:' + input\n"
+    temp_agent.handle_request(
+        "develop a skill named handwritten",
+        request_data={"name": "handwritten", "code": code},
+    )
+    stored = temp_agent.registry.get_skill("handwritten")
+    assert "mine:" in stored["code"]
+
+
+def test_an_explicitly_named_bad_skill_is_rejected_not_renamed(temp_agent):
+    """The pipeline sanitizes inferred names, which is right; but a name the
+    caller states must be rejected rather than silently changed."""
+    response = temp_agent.handle_request(
+        "develop a skill", request_data={"name": "@bad name!"}
+    )
+    assert response["result"]["success"] is False
+    assert "Invalid skill" in response["result"]["error"]
+    assert temp_agent.registry.get_skill("bad_name") is None
+
+
+def test_duplicate_creation_reports_already_exists(temp_agent):
+    data = {"name": "dup_skill", "description": "d"}
+    temp_agent.handle_request("develop a skill named dup_skill", request_data=data)
+    second = temp_agent.handle_request("develop a skill named dup_skill", request_data=data)
+    assert second["result"]["success"] is False
+    assert "already exists" in second["result"]["error"]
+    assert "use skill dup_skill" in second["result"]["suggestion"]
+
+
+# --- run() loop (Task 24.2) ----------------------------------------------
+
+def test_run_loop_handles_requests_until_exit(temp_agent):
+    lines = iter(["use skill echo_skill", "exit"])
+    written = []
+    handled = temp_agent.run(reader=lambda _: next(lines), writer=written.append)
+    assert handled == 1
+    assert any("ready" in line for line in written)
+    assert any("stopped after 1" in line for line in written)
+
+
+def test_run_loop_skips_blank_lines(temp_agent):
+    lines = iter(["", "   ", "exit"])
+    handled = temp_agent.run(reader=lambda _: next(lines), writer=lambda _: None)
+    assert handled == 0
+
+
+def test_run_loop_treats_eof_as_exit(temp_agent):
+    def _eof(_):
+        raise EOFError
+
+    assert temp_agent.run(reader=_eof, writer=lambda _: None) == 0
+
+
+@pytest.mark.parametrize("word", ["exit", "quit", ":q", "EXIT"])
+def test_run_loop_quit_words(temp_agent, word):
+    lines = iter([word])
+    assert temp_agent.run(reader=lambda _: next(lines), writer=lambda _: None) == 0

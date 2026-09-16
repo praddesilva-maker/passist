@@ -17,7 +17,7 @@ combines:
 ``handle_request`` always returns a stable dict::
 
     {
-        "intent": "use_skill" | "develop_skill" | "unknown",
+        "intent": "use_skill" | "create_skill" | "general",
         "success": bool,         # request handled without an unhandled error
         "skill_name": str | None,
         "result": dict,          # success/error/output payload
@@ -46,9 +46,20 @@ from .llm import extract_text
 # Intent vocabulary (stable, documented in PERSONAL_ASSISTANT_GUIDE.md)
 # ---------------------------------------------------------------------------
 
+# Intent vocabulary.  These are the guide's names (§1.8.8) and the ones the
+# pipelines/ package already used; the agent previously said "develop_skill"
+# and "unknown", so an intent had two spellings depending on which half of
+# the system you asked.  Task 22 unifies them - the old names remain as
+# aliases so any external caller keeps working.
 INTENT_USE_SKILL = "use_skill"
-INTENT_DEVELOP_SKILL = "develop_skill"
-INTENT_UNKNOWN = "unknown"
+INTENT_CREATE_SKILL = "create_skill"
+INTENT_GENERAL = "general"
+
+#: Deprecated aliases for the pre-Task-22 spellings.
+INTENT_DEVELOP_SKILL = INTENT_CREATE_SKILL
+INTENT_UNKNOWN = INTENT_GENERAL
+
+ALL_INTENTS = (INTENT_USE_SKILL, INTENT_CREATE_SKILL, INTENT_GENERAL)
 
 _DEVELOP_KEYWORDS = (
     "develop skill", "develop a skill", "develop the skill", "develop new skill",
@@ -166,6 +177,8 @@ class MainAgent:
         llm: Any = None,
         git_manager: Optional[GitManager] = None,
         memory_backend: Any = "memory",
+        new_pipeline: Any = None,
+        existing_pipeline: Any = None,
     ) -> None:
         self.agent_name = agent_name
         self.registry = registry or SkillRegistry()
@@ -175,6 +188,20 @@ class MainAgent:
         self.skill_builder = SkillBuilder(self.registry)
         self.memory = self._build_memory(memory_backend)
         self.stats = {"requests": 0, "skills_used": 0, "skills_created": 0}
+        # Task 22.1/22.2: the agent routes through the two pipelines rather
+        # than re-implementing creation and execution.  Imported here rather
+        # than at module scope because pipelines/ imports skills/, and a
+        # module-level import would make agent -> pipelines -> skills -> agent
+        # a cycle the moment a pipeline wants an agent helper.
+        from pipelines.existing_skill_pipeline import ExistingSkillPipeline
+        from pipelines.new_skill_pipeline import NewSkillPipeline
+
+        self.new_pipeline = new_pipeline or NewSkillPipeline(
+            llm=self.llm, registry=self.registry, builder=self.skill_builder
+        )
+        self.existing_pipeline = existing_pipeline or ExistingSkillPipeline(
+            registry=self.registry, stage=self.stage, llm=self.llm
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -287,7 +314,7 @@ class MainAgent:
     # ------------------------------------------------------------------
 
     def detect_intent(self, request: str) -> str:
-        """Classify a request into use_skill / develop_skill / unknown.
+        """Classify a request into use_skill / create_skill / general.
 
         Uses the LLM when one is available and can generate; otherwise (or on
         any failure) falls back to deterministic keyword matching.
@@ -461,6 +488,61 @@ class MainAgent:
     # Main entry point
     # ------------------------------------------------------------------
 
+    def process_input(
+        self,
+        request: str,
+        request_data: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Route one request to the pipeline that serves it (Task 22.3).
+
+        Returns ``(intent, result)``. This is the routing seam: it detects
+        the intent and dispatches to :meth:`_handle_create_skill` (New Skill
+        Pipeline), :meth:`_handle_use_skill` (Existing Skill Pipeline) or
+        :meth:`_handle_general_query`. :meth:`handle_request` wraps it in the
+        agent's response envelope.
+        """
+        intent = self.detect_intent(request)
+        if intent == INTENT_CREATE_SKILL:
+            return intent, self._handle_create_skill(request, request_data)
+        if intent == INTENT_USE_SKILL:
+            return intent, self._handle_use_skill(request, request_data)
+        return intent, self._handle_general_query(request, request_data)
+
+    def run(
+        self,
+        reader: Optional[Any] = None,
+        writer: Optional[Any] = None,
+    ) -> int:
+        """Run an interactive read-eval-print loop (Task 24.2).
+
+        ``reader`` and ``writer`` are injectable so the loop can be driven
+        by a test without touching real stdin/stdout, matching the pattern
+        used by the skill builder and the new-skill pipeline's review step.
+        Returns the number of requests handled.
+        """
+        read = reader or input
+        emit = writer or print
+        handled = 0
+        emit(f"{self.agent_name} ready. Type 'exit' to quit.")
+        while True:
+            try:
+                line = read("> ")
+            except (EOFError, KeyboardInterrupt):
+                emit("")
+                break
+            if line is None:
+                break
+            line = str(line).strip()
+            if not line:
+                continue
+            if line.lower() in {"exit", "quit", ":q"}:
+                break
+            response = self.handle_request(line)
+            handled += 1
+            emit(response.get("response") or "(no response)")
+        emit(f"{self.agent_name} stopped after {handled} request(s).")
+        return handled
+
     def handle_request(
         self,
         request: str,
@@ -469,27 +551,7 @@ class MainAgent:
     ) -> Dict[str, Any]:
         """Handle one user request; always returns a stable result dict."""
         self.stats["requests"] += 1
-        intent = self.detect_intent(request)
-        if intent == INTENT_DEVELOP_SKILL:
-            result = self._handle_develop_skill(request, request_data)
-        elif intent == INTENT_USE_SKILL:
-            result = self._handle_use_skill(request, request_data)
-        else:
-            offline = self.llm is None or getattr(self.llm, "is_offline", False)
-            mode = (
-                " (running offline: intent is matched with deterministic rules, "
-                "not an LLM)"
-                if offline
-                else ""
-            )
-            result = {
-                "success": False,
-                "message": (
-                    "I could not determine what you want to do"
-                    f"{mode}. "
-                    "Try 'use skill <name>' or 'develop a skill named <name>'."
-                ),
-            }
+        intent, result = self.process_input(request, request_data)
         skill_name = result.get("skill_name")
         # Computed once and reused for both the conversation-history record
         # (_remember_action) and the response payload below, so "what got
@@ -545,8 +607,21 @@ class MainAgent:
                 "skill_name": name,
                 "error": f"Skill '{name}' is not registered (or inactive).",
             }
+        # Task 22.2: execution goes through the Existing Skill Pipeline,
+        # which owns parameter parsing, validation and per-type dispatch.
+        # The agent keeps its own payload shape so callers are unaffected.
         try:
-            result = self.stage.execute_skill(name, input_data)
+            routed = self.existing_pipeline.handle_request(
+                request, skill_name=name, input_data=input_data
+            )
+            result = routed.get("execution") or {
+                "success": False,
+                "output": None,
+                "error": "; ".join(routed.get("errors") or []) or routed.get("response"),
+                "skill_type": None,
+                "version": None,
+                "execution_time_ms": 0.0,
+            }
         except Exception as exc:  # noqa: BLE001 - agent must stay alive
             return {
                 "success": False,
@@ -576,64 +651,130 @@ class MainAgent:
             ),
         }
 
-    def _handle_develop_skill(
+    def _handle_create_skill(
         self, request: str, request_data: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
+        """Create a skill through the New Skill Pipeline (Task 22.1).
+
+        The agent no longer builds and registers skills itself; it hands the
+        request to the pipeline, which owns analysis, code generation, the
+        QA gate and registration, then maps the pipeline's envelope back to
+        the agent's payload shape.
+
+        ``auto_confirm=True`` because the agent runs non-interactively - the
+        interactive review belongs to the CLI and the skill builder, and a
+        pipeline that called ``input()`` here would hang any caller.
+        """
+        from pipelines.new_skill_pipeline import (
+            STATUS_ALREADY_EXISTS,
+            STATUS_COMPLETED,
+        )
+
         args = self.extract_develop_args(request, request_data)
         skill_type = args.get("skill_type") or "function"
         if skill_type not in ("function", "agent", "workflow"):
             skill_type = "function"
         name = args.get("name") or "new_skill"
-        code = args.get("code") or SkillBuilder.offline_template(
-            name, args.get("description") or request
-        )
-        try:
-            registered = self.skill_builder.register(
-                name=name,
-                code=code,
-                skill_type=skill_type,
-                description=args.get("description") or request,
+        description = args.get("description") or request
+
+        # The pipeline sanitizes an unusable name into a registry-safe one
+        # (that is right when it is inferring a name from free text).  But
+        # when the caller *states* a name, silently renaming it is wrong:
+        # they asked for "@bad name!" and would get "bad_name" with no
+        # indication.  Validate an explicitly supplied name and reject it.
+        explicit_name = (request_data or {}).get("name")
+        if explicit_name:
+            check = self.registry.validate_skill(
+                {"name": explicit_name, "type": skill_type, "code": "def run(): pass"}
             )
-        except SkillAlreadyExistsError as exc:
+            if not check["valid"]:
+                return {
+                    "success": False, "created": False, "registered": False,
+                    "skill_name": explicit_name, "skill": None,
+                    "error": "Invalid skill: " + "; ".join(check["errors"]),
+                }
+
+        pipeline_data = dict(request_data or {})
+        pipeline_data.update(
+            {"name": name, "type": skill_type, "description": description}
+        )
+        if args.get("code"):
+            pipeline_data["code"] = args["code"]
+
+        try:
+            outcome = self.new_pipeline.create_skill(
+                request, request_data=pipeline_data, auto_confirm=True
+            )
+        except Exception as exc:  # noqa: BLE001 - agent must stay alive
             return {
-                "success": False,
-                "skill_name": name,
-                "error": str(exc),
-                "suggestion": f"Skill '{name}' already exists; use 'use skill {name}'.",
-            }
-        except Exception as exc:  # noqa: BLE001 - surface registry validation errors
-            return {
-                "success": False,
-                "skill_name": name,
+                "success": False, "created": False, "registered": False,
+                "skill_name": name, "skill": None,
                 "error": f"Skill registration failed: {type(exc).__name__}: {exc}",
             }
-        # SkillBuilder.register returns a structured payload instead of raising,
-        # so a validation failure arrives as {"success": False, ...}.  Treating
-        # any non-exception return as success reported rejected skills as
-        # registered; propagate the failure instead.
-        if isinstance(registered, dict) and registered.get("success") is False:
+
+        created_name = outcome.get("skill_name") or name
+        if outcome["status"] == STATUS_ALREADY_EXISTS:
             return {
                 "success": False,
                 "created": False,
                 "registered": False,
-                "skill_name": name,
-                "skill": None,
-                "error": registered.get("error") or f"Skill '{name}' was rejected.",
+                "skill_name": created_name,
+                "skill": self.registry.get_skill(created_name),
+                "error": f"Skill '{created_name}' already exists",
+                "suggestion": (
+                    f"Skill '{created_name}' already exists; "
+                    f"use 'use skill {created_name}'."
+                ),
+            }
+        if outcome["status"] != STATUS_COMPLETED:
+            return {
+                "success": False,
+                "created": False,
+                "registered": False,
+                "skill_name": created_name,
+                "skill": outcome.get("skill"),
+                "error": (
+                    "; ".join(outcome.get("errors") or [])
+                    or outcome.get("response")
+                    or f"Skill '{created_name}' was rejected."
+                ),
             }
 
-        skill = registered.get("skill") if isinstance(registered, dict) else None
-        if skill is None:
-            skill = registered
+        skill = outcome.get("skill") or self.registry.get_skill(created_name)
         version = skill.get("current_version") if isinstance(skill, dict) else None
-
         self.stats["skills_created"] += 1
         return {
             "success": True,
             "created": True,
             "registered": True,
-            "skill_name": name,
+            "skill_name": created_name,
             "skill": skill,
-            "message": f"Skill '{name}' registered (v{version}).",
+            "qa": outcome.get("qa"),
+            "message": f"Skill '{created_name}' registered (v{version}).",
+        }
+
+    #: Pre-Task-22 name, kept so external callers keep working.
+    _handle_develop_skill = _handle_create_skill
+
+    def _handle_general_query(
+        self, request: str, request_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Handle a request that matches neither pipeline (Task 22.3)."""
+        offline = self.llm is None or getattr(self.llm, "is_offline", False)
+        mode = (
+            " (running offline: intent is matched with deterministic rules, "
+            "not an LLM)"
+            if offline
+            else ""
+        )
+        return {
+            "success": False,
+            "skill_name": None,
+            "message": (
+                "I could not determine what you want to do"
+                f"{mode}. "
+                "Try 'use skill <name>' or 'develop a skill named <name>'."
+            ),
         }
 
     # ------------------------------------------------------------------

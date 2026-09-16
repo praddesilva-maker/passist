@@ -1071,7 +1071,13 @@ class NewSkillPipeline:
         self.stats["create_total"] += 1
         try:
             structure = self.analyze_request(request, request_data)
-            code = self.generate_code(structure)
+            # A caller may supply the implementation itself (the CLI's
+            # --code flag, or the main agent passing a hand-written skill).
+            # There is nothing to generate in that case, and generating
+            # anyway would silently discard what they wrote.
+            explicit_code = (request_data or {}).get("code")
+            explicit_code = explicit_code if str(explicit_code or "").strip() else None
+            code = explicit_code or self.generate_code(structure)
 
             if not auto_confirm:
                 decision = self._review_skill({**structure, "code": code})
@@ -1106,7 +1112,7 @@ class NewSkillPipeline:
                         decision = None
                         break
                     structure = edited
-                    code = self.generate_code(structure)
+                    code = explicit_code or self.generate_code(structure)
                     decision = self._review_skill({**structure, "code": code})
                 if decision is None:
                     return self._creation_result(
@@ -1117,7 +1123,7 @@ class NewSkillPipeline:
                     )
                 if isinstance(decision, dict):
                     structure = decision
-                    code = self.generate_code(structure)
+                    code = explicit_code or self.generate_code(structure)
 
             name = structure.get("name", "new_skill")
             registration = self._register_skill(structure, code)

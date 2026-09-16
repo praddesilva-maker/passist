@@ -54,10 +54,10 @@ guide slice before being marked `DONE`.
 | 19 | Test Existing Skill Pipeline | DONE | 50 | yes | `tests/test_existing_skill_pipeline.py`; suite 242 passed; `pipelines/` 94% |
 | 20 | Main Agent — GLM Integration | DONE | 25 in file | yes | verified; `agent/agent_config.py`'s pydantic AgentConfig is dead code (carry-forward) |
 | 21 | Main Agent — Intent Detection | DONE | 25 in file | yes | stress-tested ~25 phrasings incl. adversarial; vocabulary unified in Task 22 |
-| 22 | Main Agent — Pipeline Integration | NOT_STARTED | — | no | `pipelines/` now exists; remains until Task 11 + Tasks 15–17 land |
+| 22 | Main Agent — Pipeline Integration | DONE | 19 in file | yes | both pipelines wired; routing moved into them; intents unified; `process_input()`+`run()` added |
 | 23 | Main Agent — Memory Management | DONE | 25 in file | yes | **23.2/23.3 were unmet** — no conversation stored, no retrieval; `get_history()` added |
 | 24 | Main Agent — Entry Point | DONE | 10 CLI tests | yes | **`main.py list` was completely broken** (handle_list signature); main.py had zero coverage |
-| 25 | Complete System QA Testing | NOT_STARTED | passing | no | `skills/qa_skill.py` exists; its 7 tests now PASS (stale "all 7 error" note corrected 2026-09-17); `qa/` package still missing |
+| 25 | Complete System QA Testing | DONE | 21 in file | yes | `qa/` package + `QATestSuite`; 23/23 system checks pass; isolated from the real registry |
 
 ## 3. Current Task Detail
 

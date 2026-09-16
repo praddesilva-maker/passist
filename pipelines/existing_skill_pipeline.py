@@ -496,6 +496,19 @@ class ExistingSkillPipeline:
         holds the coerced values, with declared defaults filled in.
         """
         declared = self._declared_parameters(skill)
+        if not declared:
+            # No declared schema, so there is nothing to validate against.
+            # Registering `parameters` metadata is optional, and plenty of
+            # skills omit it while their run() still takes arguments - the
+            # unified stage resolves kwargs against the real signature.
+            # Rejecting every argument as "unknown" here would make such a
+            # skill impossible to call through the pipeline at all.
+            return {
+                "valid": True,
+                "params": dict(params),
+                "errors": [],
+                "missing": [],
+            }
         errors: List[str] = []
         missing: List[str] = []
         coerced: Dict[str, Any] = {}

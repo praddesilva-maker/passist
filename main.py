@@ -229,7 +229,7 @@ def handle_chat(rt: Dict[str, Any], args: argparse.Namespace) -> int:
         emit(
             {
                 "success": False,
-                "intent": "unknown",
+                "intent": "general",
                 "error": "empty message; provide a chat message argument",
             }
         )
