@@ -24,13 +24,46 @@ business, from bank statement CSVs plus the user's BAS Excel template.
    the totals only in the conversation — if the conversation is compacted you
    will lose them. The files are your memory.
 
+## Tooling and paths — non-negotiable
+
+This instance has TWO file tools with completely separate, non-overlapping
+roots. Using the wrong one is the single most common way this skill fails.
+
+**Use ONLY Open Terminal.** Its tools are `run_command`, `list_files`,
+`read_file`, `write_file`. Everything you need is reachable from it.
+
+**NEVER use the filesystem MCP tools.** They are named `tool_list_directory`,
+`tool_read_file`, `tool_write_file`, `tool_create_directory`,
+`tool_list_allowed_directories` — anything shaped `tool_*_post`. They are rooted
+at `/workspace`, an unrelated directory that contains NONE of the user's files.
+If you call one you will get `Access denied - path outside allowed directories`,
+or worse, you will silently create files somewhere the user will never find them.
+
+Fixed paths — use these literally, never a relative path:
+
+| What | Where |
+|---|---|
+| The user's uploaded files | `/home/user/` (they arrive automatically) |
+| Your intermediate working files | `/home/user/out/<run>/working/` |
+| Final deliverables | `/home/user/out/<run>/` |
+
+`<run>` is a timestamped folder you create once, e.g. `20260917-1530`.
+`/home/user/out/` is a real directory on the user's NAS, so anything you write
+there they can actually collect. Nothing else is durable — write results there,
+not to `/home/user` and never to `/workspace`.
+
+If a path you expect is missing, run `ls -la /home/user` with `run_command` and
+report exactly what you see. Do not go hunting with the other tool.
+
 ## Phase 0 — Check what you have
 
 Before anything else, confirm and report:
 
 - The ATO rules Knowledge collection is attached and readable. Name the rules
   you found. If it is absent, STOP and tell the user to attach it.
-- Which files the user has uploaded: bank statement CSVs, BAS Excel template.
+- Which files the user has uploaded. Run `ls -la /home/user` via `run_command`
+  and list what you find: bank statement CSVs, BAS Excel template. Uploaded
+  files are placed there by Open WebUI automatically — you do not fetch them.
 - If either is missing, ask for it. Do not proceed on assumptions.
 
 Then ask the user to confirm:
@@ -51,7 +84,7 @@ Using Python in Open Terminal:
 3. Filter to the BAS period. Report how many rows fell inside and outside.
 4. Print the total money in and total money out. **Record these — they are what
    the reconciliation must match later.**
-5. Save the normalised transactions to `working/transactions.csv`.
+5. Save the normalised transactions to `/home/user/out/<run>/working/transactions.csv`.
 
 Report the row counts and totals to the user before continuing.
 
@@ -78,7 +111,7 @@ Watch these traps specifically — **no GST** on: wages, bank interest and fees,
 ATO payments, most government charges, private expenses, and purchases from
 suppliers who are not GST-registered.
 
-Save to `working/classified.csv` with a `category` and `rule_reference` column.
+Save to `/home/user/out/<run>/working/classified.csv` with a `category` and `rule_reference` column.
 Cite which rule from the Knowledge collection drove each non-obvious call.
 
 Then **STOP and show the user**:
@@ -104,7 +137,7 @@ produce the figure **and the list of transaction rows behind it**.
 Apply the GST fraction and rounding exactly as the rules collection states. If
 the collection does not state the rounding rule, say so and ask — do not pick one.
 
-Save to `working/labels.json`.
+Save to `/home/user/out/<run>/working/labels.json`.
 
 ## Phase 4 — Reconcile (do not skip)
 
@@ -116,7 +149,7 @@ In Python, verify that classified totals equal the Phase 1 bank totals.
   reconciliation means the classification is incomplete, not that the total
   needs fixing.
 
-Save to `working/reconciliation.txt`.
+Save to `/home/user/out/<run>/working/reconciliation.txt`.
 
 ## Phase 5 — Confirm the template mapping
 
@@ -128,7 +161,8 @@ Templates differ and a misplaced figure is a wrong return.
 
 ## Phase 6 — Produce the outputs
 
-Write to a timestamped folder, **never overwriting the user's uploads**:
+Write to `/home/user/out/<run>/`, **never overwriting the user's uploads**
+in `/home/user/`:
 
 1. **Populated BAS template** — a copy, with the confirmed cells filled
 2. **Working paper** — per label: the figure, the transactions behind it, and
